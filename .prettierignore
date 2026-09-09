@@ -1,0 +1,10 @@
+node_modules
+dist
+pnpm-lock.yaml
+.sandboxes
+state
+# Prose and agent config this issue does not own: blueprint input, run logs, instructions.
+docs
+.claude
+CLAUDE.md
+SETUP.md
