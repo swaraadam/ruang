@@ -1,0 +1,18 @@
+{
+  "files": [],
+  "references": [
+    { "path": "adapters/domain/assets" },
+    { "path": "adapters/domain/code" },
+    { "path": "adapters/host/darwin" },
+    { "path": "adapters/provider/claude" },
+    { "path": "adapters/provider/codex" },
+    { "path": "apps/gateway" },
+    { "path": "apps/web" },
+    { "path": "packages/attention" },
+    { "path": "packages/domain" },
+    { "path": "packages/persistence" },
+    { "path": "packages/policy" },
+    { "path": "packages/protocol" },
+    { "path": "tests" }
+  ]
+}

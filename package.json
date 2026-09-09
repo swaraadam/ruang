@@ -1,16 +1,26 @@
 {
-  "name": "agent-workspace",
+  "name": "@internal/root",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
-  "comment": "Seed only. P0-01 completes the toolchain (project refs, lint, vitest config).",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test && ./scripts/audit-seams.sh && ./scripts/audit-identity.sh",
-    "typecheck": "tsc -b --pretty false || echo 'no project references yet (P0-01)'",
-    "lint": "echo 'lint not configured yet (P0-01)'",
-    "test": "echo 'no tests yet (P0-01)'",
+    "typecheck": "tsc -b",
+    "lint": "eslint . && prettier --check .",
+    "test": "vitest run",
     "audit": "./scripts/audit-seams.sh && ./scripts/audit-identity.sh",
     "ready": "python3 scripts/next-ready.py",
     "gate": "./scripts/gate-check.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.1",
+    "eslint": "^10.10.0",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0",
+    "vitest": "^5.0.0"
   }
 }
