@@ -8,6 +8,7 @@ type Tsconfig = { extends?: string; compilerOptions?: Record<string, unknown>; r
 
 const repo = new URL('../', import.meta.url);
 const read = (rel: string) => JSON.parse(readFileSync(new URL(rel, repo), 'utf8')) as Tsconfig;
+const STRICT_FLAGS = ['strict', 'noUncheckedIndexedAccess', 'exactOptionalPropertyTypes'] as const;
 
 const members = ['apps', 'packages', 'adapters']
   .flatMap((root) =>
@@ -18,19 +19,20 @@ const members = ['apps', 'packages', 'adapters']
   .sort();
 
 describe('workspace toolchain', () => {
-  it.each(['strict', 'noUncheckedIndexedAccess', 'exactOptionalPropertyTypes'])(
-    'keeps %s on in the shared compiler base',
-    (flag) => {
-      expect(read('tsconfig.base.json').compilerOptions?.[flag]).toBe(true);
-    },
-  );
+  it.each(STRICT_FLAGS)('keeps %s on in the shared compiler base', (flag) => {
+    expect(read('tsconfig.base.json').compilerOptions?.[flag]).toBe(true);
+  });
 
   it('references every workspace member from the root solution', () => {
     const referenced = read('tsconfig.json').references?.map((r) => r.path) ?? [];
     expect(members.filter((m) => !referenced.includes(m))).toEqual([]);
   });
 
-  it.each(members)('%s inherits the strict base', (member) => {
-    expect(read(`${member}/tsconfig.json`).extends).toMatch(/tsconfig\.base\.json$/);
+  // extends alone is not enough: a member can re-disable the floor in its own compilerOptions,
+  // which tsc accepts silently and would make acceptance 4 true of one file, not of the repo.
+  it.each(members)('%s inherits the strict base without opting out', (member) => {
+    const cfg = read(`${member}/tsconfig.json`);
+    expect(cfg.extends).toMatch(/tsconfig\.base\.json$/);
+    for (const flag of STRICT_FLAGS) expect(cfg.compilerOptions?.[flag]).not.toBe(false);
   });
 });
