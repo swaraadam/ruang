@@ -32,12 +32,15 @@
       "Glob",
       "Grep",
       "Task",
-      "TodoWrite"
+      "TodoWrite",
+      "Bash(git push -u origin *)",
+      "Bash(gh pr merge * --squash --delete-branch*)",
+      "Bash(gh pr review*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh run view*)"
     ],
     "deny": [
-      "Bash(git push*)",
       "Bash(git push --force*)",
-      "Bash(gh pr merge*)",
       "Bash(gh repo delete*)",
       "Bash(gh secret*)",
       "Bash(gh auth*)",
@@ -54,7 +57,14 @@
       "Bash(cloudflared *)",
       "Read(./.env)",
       "Read(./state/secrets/**)",
-      "Edit(./docs/blueprint/**)"
+      "Edit(./docs/blueprint/**)",
+      "Bash(git push origin main*)",
+      "Bash(git push* --force*)",
+      "Bash(git push -f*)",
+      "Edit(./.github/workflows/**)",
+      "Edit(./.claude/settings.json)",
+      "Edit(./scripts/audit-seams.sh)",
+      "Edit(./scripts/audit-identity.sh)"
     ]
   },
   "hooks": {
@@ -62,7 +72,10 @@
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "./scripts/audit-seams.sh --quiet-on-pass" }
+          {
+            "type": "command",
+            "command": "./scripts/audit-seams.sh --quiet-on-pass"
+          }
         ]
       }
     ]
