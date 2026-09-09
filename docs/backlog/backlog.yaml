@@ -36,7 +36,7 @@ issues:
     phase: 0
     agent: protocol-engineer
     size: M
-    depends_on: [P0-01]
+    depends_on: [P0-01, M-04]
     refs: "Appendix A, 14.2"
     goal: The wire vocabulary, closed and versioned, with ephemeral data impossible to persist.
     scope:
@@ -519,3 +519,93 @@ issues:
       - "live terminal survives gateway restart, canonical origin works, change sets marked unchecked, preview/notification/claim flows work from phone"
       - "friction log template exists and the two-week clock is recorded with a start date"
       - "no Phase 2 issue is created until the friction log justifies it"
+
+  - id: M-01
+    title: "Fix gate-check.sh: correct pnpm invocation and report UNPROVEN for an empty scan"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    refs: "20, 22, 23"
+    goal: |
+      A gate check that cannot be trusted is worse than no gate check. Two lines of phase-0 output are
+      currently wrong in opposite directions, so the script must be repaired before any gate verdict is
+      treated as meaningful.
+    scope:
+      - "condition 0.2 runs `pnpm -s verify`, which pnpm 12 rejects with `unexpected argument '-s'`, so it reports FAIL unconditionally; use `pnpm --silent run verify`"
+      - "condition 0.1 prints PASS when the audits scanned nothing, because every check is guarded by `[[ -d ]]` over directories that may not exist; it must print UNPROVEN instead"
+      - "distinguish 'the check ran and passed' from 'the check had nothing to look at' everywhere in the script"
+    acceptance:
+      - "0.2 reflects the real exit status of the verify script, proven by running it against a branch where verify passes and one where it fails"
+      - "0.1 reports UNPROVEN, not PASS, when packages/ apps/ adapters/ are absent, and PASS only when the audits actually scanned files"
+      - "an empty scan can never produce a PASS anywhere in the script (test)"
+      - "`./scripts/gate-check.sh 0` output is reproduced in the evidence comment for both the passing and the empty case"
+
+  - id: M-02
+    title: "Widen audit patterns to catch compound identifiers and scan config/ for identity"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    refs: "21"
+    goal: |
+      Invariants 8 and 9 are currently enforced against prose more than against code. The audits match bare
+      words, but real TypeScript writes commitSha and basis_ref, so the vocabulary rules leak exactly where
+      the code will be written.
+    scope:
+      - "seam audit must catch compound and plural forms: commitSha, commit_sha, gitRef, commits, merged, diffs"
+      - "identity audit must catch IsOwner and is_owner as well as isOwner/isMe"
+      - "identity audit must scan config/ in addition to packages/, apps/, adapters/"
+      - "the `.test.`/`.spec.` exemption must match the file path only, not any line whose content happens to contain that substring"
+      - "keep the adapters/domain/code and adapters/host/darwin carve-outs intact"
+    acceptance:
+      - "each of commitSha, commit_sha, gitRef, commits in packages/domain fails the seam audit (test)"
+      - "each of IsOwner, is_owner, isOwner in packages/, apps/, adapters/, config/ fails the identity audit (test)"
+      - "`export const commit = 1; // see foo.test.ts` fails, while a genuine packages/domain/x.test.ts file is still exempt (test)"
+      - "git vocabulary in adapters/domain/code and macOS vocabulary in adapters/host/darwin still pass (test)"
+      - "no audit is weakened: every violation class the audits caught before this issue still fails"
+
+  - id: M-03
+    title: "CI workflow as tracked configuration"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    refs: "20, 22"
+    goal: |
+      The verify workflow and the branch protection it backs are now load-bearing for agent landing
+      authority, but arrived outside the backlog. Track them so changes to them are reviewed like any
+      other change.
+    scope:
+      - "document .github/workflows/verify.yml: what it runs, which check name branch protection requires"
+      - "pin the toolchain so CI and local agree — the repo has no packageManager field, so corepack picks a default pnpm major"
+      - "record that agents are denied Edit on .github/workflows/** and why"
+      - "state the ordering constraint: `pnpm install --frozen-lockfile` needs a committed lockfile, so CI cannot pass on a branch whose base lacks one"
+    acceptance:
+      - "the workflow's required check name matches the context in branch protection, verified against `gh api repos/:owner/:repo/branches/main/protection`"
+      - "a packageManager field pins the pnpm major, and CI uses it rather than a corepack default"
+      - "CI is green on this issue's own PR"
+      - "docs state which files are guardrails agents may not edit, and what to do instead"
+
+  - id: M-04
+    title: "Decide module resolution: emitted ESM must resolve under node"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    refs: "19, 20, 21"
+    goal: |
+      tsconfig.base.json sets module ES2022 + moduleResolution bundler. Combined with the "type":"module"
+      and exports fields P0-01 added, any member with more than one source file emits extensionless
+      relative imports that node cannot resolve, and pnpm verify exits 0 while it happens. P0-02 is
+      packages/protocol, a multi-file package everything else imports, so the trap fires there first.
+    scope:
+      - "reproduce: a second file in packages/protocol emits `export { X } from './helper'`; node reports ERR_MODULE_NOT_FOUND while tsc -b exits 0"
+      - "decide the resolution mode deliberately — nodenext makes it a compile-time TS2835 and fails closed, but apps/web builds under Vite and apps/gateway runs under node, and they may not want the same base"
+      - "if the two need different modes, say so explicitly rather than forcing one base"
+      - "add a check so emitted output that node cannot import fails the build rather than shipping"
+    acceptance:
+      - "a multi-file member is added and its emitted dist is imported by node successfully (test)"
+      - "the failure mode is caught at build time, not at import time — an extensionless emitted specifier fails verify (test)"
+      - "the chosen mode is recorded with its reasoning, including what it means for apps/web under Vite and apps/gateway under node"
+      - "P0-01's existing single-file members still pass unchanged"
