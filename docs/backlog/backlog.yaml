@@ -36,7 +36,7 @@ issues:
     phase: 0
     agent: protocol-engineer
     size: M
-    depends_on: [P0-01]
+    depends_on: [P0-01, M-04]
     refs: "Appendix A, 14.2"
     goal: The wire vocabulary, closed and versioned, with ephemeral data impossible to persist.
     scope:
@@ -586,3 +586,26 @@ issues:
       - "a packageManager field pins the pnpm major, and CI uses it rather than a corepack default"
       - "CI is green on this issue's own PR"
       - "docs state which files are guardrails agents may not edit, and what to do instead"
+
+  - id: M-04
+    title: "Decide module resolution: emitted ESM must resolve under node"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    refs: "19, 20, 21"
+    goal: |
+      tsconfig.base.json sets module ES2022 + moduleResolution bundler. Combined with the "type":"module"
+      and exports fields P0-01 added, any member with more than one source file emits extensionless
+      relative imports that node cannot resolve, and pnpm verify exits 0 while it happens. P0-02 is
+      packages/protocol, a multi-file package everything else imports, so the trap fires there first.
+    scope:
+      - "reproduce: a second file in packages/protocol emits `export { X } from './helper'`; node reports ERR_MODULE_NOT_FOUND while tsc -b exits 0"
+      - "decide the resolution mode deliberately — nodenext makes it a compile-time TS2835 and fails closed, but apps/web builds under Vite and apps/gateway runs under node, and they may not want the same base"
+      - "if the two need different modes, say so explicitly rather than forcing one base"
+      - "add a check so emitted output that node cannot import fails the build rather than shipping"
+    acceptance:
+      - "a multi-file member is added and its emitted dist is imported by node successfully (test)"
+      - "the failure mode is caught at build time, not at import time — an extensionless emitted specifier fails verify (test)"
+      - "the chosen mode is recorded with its reasoning, including what it means for apps/web under Vite and apps/gateway under node"
+      - "P0-01's existing single-file members still pass unchanged"
