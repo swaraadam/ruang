@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.sandboxes/
+logs/
+state/artifacts/
+state/debug/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
+.env.*
+docs/backlog/.issue-map.json.bak
+.DS_Store
+__pycache__/

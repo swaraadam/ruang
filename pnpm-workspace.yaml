@@ -1,0 +1,6 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'adapters/domain/*'
+  - 'adapters/host/*'
+  - 'adapters/provider/*'

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(pnpm *)",
+      "Bash(node *)",
+      "Bash(npx tsc *)",
+      "Bash(python3 *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git checkout*)",
+      "Bash(git switch*)",
+      "Bash(git worktree*)",
+      "Bash(git branch*)",
+      "Bash(git stash*)",
+      "Bash(gh issue*)",
+      "Bash(gh pr create*)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr diff*)",
+      "Bash(gh label*)",
+      "Bash(./scripts/*)",
+      "Bash(scripts/*)",
+      "Bash(rg *)",
+      "Bash(grep *)",
+      "Bash(sqlite3 *)",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "Task",
+      "TodoWrite"
+    ],
+    "deny": [
+      "Bash(git push*)",
+      "Bash(git push --force*)",
+      "Bash(gh pr merge*)",
+      "Bash(gh repo delete*)",
+      "Bash(gh secret*)",
+      "Bash(gh auth*)",
+      "Bash(npm publish*)",
+      "Bash(pnpm publish*)",
+      "Bash(rm -rf /*)",
+      "Bash(sudo *)",
+      "Bash(curl * -d*)",
+      "Bash(security *)",
+      "Bash(defaults write*)",
+      "Bash(launchctl load*)",
+      "Bash(launchctl bootstrap*)",
+      "Bash(tailscale *)",
+      "Bash(cloudflared *)",
+      "Read(./.env)",
+      "Read(./state/secrets/**)",
+      "Edit(./docs/blueprint/**)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "./scripts/audit-seams.sh --quiet-on-pass" }
+        ]
+      }
+    ]
+  }
+}
