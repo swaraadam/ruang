@@ -45,7 +45,7 @@ check_by_running(){
   pnpm --silent exec vitest run --reporter=json --outputFile="$out" "$@" >/dev/null 2>&1
   rc=$?
   counts="$(node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
-process.stdout.write([j.numPassedTests|0,j.numFailedTests|0,(j.numPendingTests|0)+(j.numTodoTests|0)].join(" "))' \
+process.stdout.write([j.numPassedTests|0,j.numFailedTests|0,(j.numPendingTests|0)+(j.numTodoTests|0)+(j.numPendingTestSuites|0)].join(" "))' \
     "$out" 2>/dev/null)"
   rm -f "$out"
   [[ -z "$counts" ]] && { unproven "$label" "runner produced no result (exit $rc); $owner"; return; }

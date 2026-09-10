@@ -215,9 +215,11 @@ describe('gate-check 0.3/0.4 prove themselves by executing a named test', () => 
     // the skip branch can produce this; a stub-only file yields p==0, indistinguishable from
     // nothing running. it.todo lands in a fourth vitest counter and is how a half-written
     // P0-08 would look.
-    for (const stub of ['it.skip', 'it.todo']) {
-      put(dir, RESTART_TEST, oneTest(true) + `${stub}('the unwritten half', () => {});\n`);
-      expect(verdict(runGate(dir), '0.3'), stub).toContain('skipped');
+    // Bodyless describe.todo declares zero tests: it lands only in numPendingTestSuites.
+    const imp = ['{ expect, it }', '{ describe, expect, it }'] as const;
+    for (const s of ["it.skip('x', () => {});", "it.todo('x');", "describe.todo('x');"]) {
+      put(dir, RESTART_TEST, oneTest(true).replace(imp[0], imp[1]) + s + '\n');
+      expect(verdict(runGate(dir), '0.3'), s).toContain('skipped');
     }
   }, 30_000);
 
