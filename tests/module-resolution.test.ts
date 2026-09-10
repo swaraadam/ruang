@@ -33,7 +33,9 @@ const members = ['apps', 'packages', 'adapters']
   .sort();
 
 // apps/web is bundled by Vite, which resolves extensionless specifiers itself, so its sources are
-// allowed to write `from './App'`. Every other member must emit output node can load unaided.
+// allowed to write `from './App'`. Every other member must emit output node can load unaided --
+// apps/gateway in particular runs directly under node, so nodenext is what it needs, not a
+// concession it tolerates.
 const BUNDLER_EXCEPTIONS = ['apps/web'];
 const nodeResolved = members.filter((m) => !BUNDLER_EXCEPTIONS.includes(m));
 
@@ -42,13 +44,19 @@ const nodeCanImport = (href: string) => {
   const r = spawnSync(
     process.execPath,
     ['--input-type=module', '-e', `await import(${JSON.stringify(href)})`],
-    {
-      encoding: 'utf8',
-    },
+    { encoding: 'utf8', timeout: 30_000 },
   );
+  // A bounded timeout is not optional here. vitest's own test timeout cannot interrupt a blocking
+  // spawnSync -- the worker sits in a syscall -- and verify.yml sets no timeout-minutes, so an
+  // entry point that side-effect-starts a listener (apps/gateway is Fastify + WebSocket) would
+  // hang CI for its 360-minute default with no output at all. Fail closed, and say which way.
+  if (r.error !== undefined || r.signal !== null) {
+    return { ok: false, err: `did not exit (${r.signal ?? r.error?.message ?? 'unknown'})` };
+  }
+  const ok = r.status === 0;
   return {
-    ok: r.status === 0,
-    err: (r.stderr || '').split('\n').find((l) => l.includes('Error')) ?? '',
+    ok,
+    err: ok ? '' : ((r.stderr || '').split('\n').find((l) => l.includes('Error')) ?? ''),
   };
 };
 
@@ -112,7 +120,12 @@ describe('emitted modules resolve under node', () => {
   describe('multi-file fixture', () => {
     const fixture = new URL('tests/dist/fixtures/multifile/index.js', repo);
 
-    it('is emitted', () => {
+    it('is emitted from sources that still exist', () => {
+      // tsc -b does not clean stale output, so asserting only on dist lets a deleted fixture pass
+      // locally while failing on a fresh clone.
+      for (const src of ['index.ts', 'helper.ts']) {
+        expect(existsSync(new URL(`tests/fixtures/multifile/${src}`, repo)), src).toBe(true);
+      }
       expect(existsSync(fixture), 'run `tsc -b` first (`pnpm verify` does)').toBe(true);
     });
 
