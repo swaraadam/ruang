@@ -634,19 +634,22 @@ issues:
       - "0.3 also infers from a filename glob (`ls adapters/host/darwin/**/*session*restart*`), which is the same defect without a grep: a zero-byte file with a matching name flips it to PASS. A filename is not evidence either"
       - "the positive rule is the real constraint, not the banned spellings: a condition runs something and reads its result, or reports UNPROVEN"
       - "print the command that proves each condition, per .claude/skills/phase-gates/SKILL.md"
+      - "print the basis the verdict was computed against -- repo path, HEAD, and whether the tree is dirty. ADR-0002 recorded this by hand; the gate should state its own basis (CLAUDE.md section 3, basis.ref plus basis.inputs)"
+      - "the final `all conditions PASS` line is derived from RC=0, i.e. the absence of a failure, with no count of expected conditions -- assert the expected number of conditions actually reported"
       - "0.3's PASS text currently reads 'inspect its output before trusting it', which is UNPROVEN with extra words -- resolve it"
       - "recursion applies to running the WHOLE suite: 0.2 shells out to `pnpm run verify` -> vitest -> tests/gate-check.test.ts -> the gate. Running a single NAMED test does not re-enter, so the mandate above is implementable"
       - "gate-check.sh:66 (`grep -q STOP_AND_USE_START docs/gates/*.md`) is a deliberate exclusion: that fact really is documentary. Say so rather than leaving it as an inconsistency"
       - "a machine-readable artifact written by the real test run is the suggested shape, but a results file is ALSO just text in a file -- it only counts as evidence if it is provenance-bound and freshness-bound"
-      - "the artifact must carry the commit ref and timestamp of the run that produced it; missing, stale relative to HEAD, or unparseable is UNPROVEN, never PASS"
+      - "IF an artifact is used at all, it carries the commit ref and timestamp of the run that produced it, and stale or unparseable is UNPROVEN -- but read the next two bullets before choosing that design at all"
       - "but freshness is not authenticity: the overnight agent writes to the same filesystem the gate reads, and `git rev-parse HEAD` is one command away, so a forged artifact passes any HEAD check. Nor does HEAD-binding catch a dirty tree -- sources change while HEAD does not (CLAUDE.md section 3 draws exactly this line between basis.ref and basis.inputs)"
-      - "PREFERRED: since a named test does not re-enter the gate, the artifact's only reason to exist is gone. Run the test. Demote any artifact to an optional cache whose absence means run it, never UNPROVEN-by-default -- then forging it buys nothing because the gate re-runs anyway"
+      - "REQUIRED, not merely preferred: since a named test does not re-enter the gate, the artifact has no reason to exist. Run the test. Any artifact is an optional cache only -- its ABSENCE means run the test, and its PRESENCE never by itself justifies PASS. A present, fresh, correctly-signed artifact is still not evidence; only a run is"
       - "it lives under state/artifacts/, which IS gitignored -- state/ itself is not, so state/gate/results.json would be fully committable and the guarantee would evaporate"
     acceptance:
       - "no `grep -r` remains in gate-check.sh (test)"
       - "adding a .ts file containing the literal strings 0.3 and 0.4 used to grep for does not change any condition's verdict (test -- this is the exact M-01 regression)"
       - "adding a zero-byte file named adapters/host/darwin/tests/session-restart.test.ts does not change 0.3's verdict (test -- verified today: on main it flips UNPROVEN to PASS)"
       - "0.3 and 0.4 report PASS only when a named test actually ran and exited 0, proven by making that test fail and observing the verdict change"
+      - "a HAND-WRITTEN artifact claiming pass, carrying a correct `git rev-parse HEAD` and a current timestamp, does not produce PASS (test). This is the path no other criterion exercises, and it is the closest analogue to how the original incident happened"
       - "running the gate does not re-enter itself: assert a re-entrancy guard, not a wall-clock bound. A bounded two-level recursion finishes quickly while still re-entering, and a legitimately slow verify is not a recursion (test)"
       - "`./scripts/gate-check.sh 0` output is reproduced in the evidence for: all-unproven, condition-passing, and condition-failing cases"
 
@@ -656,6 +659,7 @@ issues:
     agent: contract-test-engineer
     size: S
     depends_on: [M-05]
+    blocked_gate: "only the audits know which checks examined what, but scripts/audit-*.sh are guardrail paths an agent may not edit. Deriving coverage from outside them means censusing files, which IS the existence-sniffing family this issue exists to remove. Owner must either approve the audits emitting their own coverage, or accept a weaker gate"
     refs: "21, 23"
     goal: |
       0.1 prints "audits green over adapters apps packages", which reads as full coverage. It is not.
@@ -669,6 +673,7 @@ issues:
       - "do not edit scripts/audit-seams.sh or scripts/audit-identity.sh -- they are guardrail files requiring owner approval; the gate owns its own verdict semantics"
     acceptance:
       - "with zero .sql files present, 0.1 does not report unqualified PASS for invariant 8 (test)"
+      - "a zero-byte packages/domain/src/index.ts also does not report PASS -- narrowing the existence test (e.g. adding -name '*.ts') is NOT a fix, it is the same move that created a second instance of the defect during M-01 (test)"
       - "a tree whose only file under packages/domain is a zero-byte .keep or a one-line README does not report PASS for 0.1 (test -- verified: gate-check.sh:32 uses `find -type f -print -quit`, so ANY regular file arms it. This is armed today by design: P0-01 mandates a one-line README in every package folder, so 0.1 currently reports PASS with zero source files examined)"
       - "with packages/persistence/migrations/schema.sql present and clean, invariant 8 reports PASS (test). Name the path: audit-identity.sh globs migrations/*.sql and persistence/*/*.sql with globstar off, so a .sql at the repo root or at packages/persistence/x.sql is never examined"
       - "a tree where only apps/ exists does not report PASS for invariant 9, whose scan set is packages/domain and packages/protocol (test)"
