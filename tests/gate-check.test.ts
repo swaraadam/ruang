@@ -2,15 +2,17 @@ import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   realpathSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -58,8 +60,43 @@ const put = (dir: string, rel: string, body: string) => {
   writeFileSync(join(dir, rel), body);
 };
 
+/** package.json with a verify script of our choosing, so 0.2 has a subject with a known answer. */
+const withVerify = (dir: string, verify: string) => {
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: 'f', private: true, scripts: { verify } }),
+  );
+  return dir;
+};
+
+/** PATH with every directory that provides `cmd` removed. */
+const pathWithout = (cmd: string) =>
+  (process.env.PATH ?? '')
+    .split(delimiter)
+    .filter((d) => d !== '' && !existsSync(join(d, cmd)))
+    .join(delimiter);
+
+/** What `command -v` finds under a given PATH. The control for pathWithout: a strip that missed a
+ *  copy leaves the runner reachable and the test then measures nothing. That happened while
+ *  writing this file -- node lived in two PATH directories and removing one changed no verdict. */
+const resolves = (cmd: string, path: string) =>
+  spawnSync('sh', ['-c', `command -v ${cmd} || true`], {
+    env: { ...process.env, PATH: path },
+    encoding: 'utf8',
+  }).stdout.trim();
+
+/** A stand-in `pnpm` first on PATH, so a runner's behaviour can be chosen rather than assumed. */
+const shimPath = (dir: string, body: string) => {
+  const bin = join(dir, 'shim-bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'pnpm'), body);
+  chmodSync(join(bin, 'pnpm'), 0o755);
+  return `${bin}${delimiter}${pathWithout('pnpm')}`;
+};
+
 const RESTART_TEST = 'adapters/host/darwin/tests/session-restart.test.ts';
 const CONTRACT_TEST = 'packages/domain/src/basis.contract.test.ts';
+const BROKEN_CONTRACT_TEST = 'packages/domain/src/collect-fail.contract.test.ts';
 const oneTest = (green: boolean) =>
   `import { expect, it } from 'vitest';\nit('proves it', () => { expect(1).toBe(${green ? 1 : 2}); });\n`;
 
@@ -126,6 +163,18 @@ describe('gate-check phase 0', () => {
 
     expect(verdict(runGate(dir), '0.1')).toContain('FAIL');
   });
+
+  it('reports UNPROVEN, not FAIL, when an audit it runs is not there to run', () => {
+    // 127 from a missing script is not an audit result. Same rule as 0.2, one condition up.
+    const dir = makeTree(['packages/domain']);
+    expect(verdict(runGate(dir), '0.1')).toContain('PASS'); // control: it passes when both exist
+    rmSync(join(dir, 'scripts/audit-identity.sh'));
+
+    const v = verdict(runGate(dir), '0.1');
+    expect(v).toContain('UNPROVEN');
+    expect(v).toContain('audit-identity.sh');
+    expect(v).not.toContain('FAIL');
+  }, 30_000);
 
   it('does not use a pnpm flag that pnpm rejects', () => {
     // `pnpm -s` is rejected by pnpm >=12 with `unexpected argument '-s'`, so 0.2 reported FAIL
@@ -253,6 +302,29 @@ describe('gate-check 0.3/0.4 prove themselves by executing a named test', () => 
     expect(out).toMatch(/basis\.tree\s+dirty/);
   }, 30_000);
 
+  it('refuses a suite that could not be collected, though every counter it reads says green', () => {
+    // The `rc != 0` branch of check_by_running, which had no test and is deletable without one.
+    // vitest reports a file that cannot be collected in numFailedTestSuites, NOT in
+    // numFailedTests: here it is 1 passed / 0 failed / 0 skipped and exit 1. Every counter the
+    // verdict reads says green, so the runner's own exit code is the only evidence left that
+    // half the selected suite never ran.
+    const dir = withRunner(makeTree(['packages/domain']));
+    put(dir, CONTRACT_TEST, oneTest(true));
+    // Control: with only the healthy file this same tree reaches PASS, so the verdict below is
+    // caused by the broken file and not by a fixture that could never pass.
+    expect(verdict(runGate(dir), '0.4')).toContain('PASS      contract suite: 1 test(s) executed');
+
+    put(
+      dir,
+      BROKEN_CONTRACT_TEST,
+      "import './does-not-exist.js';\nimport { it } from 'vitest';\nit('never collected', () => {});\n",
+    );
+    const after = verdict(runGate(dir), '0.4');
+    expect(after).toContain('UNPROVEN');
+    expect(after).toMatch(/runner exited [1-9]\d* with 1 passing test\(s\)/);
+    expect(after).not.toContain('PASS');
+  }, 60_000);
+
   it('refuses to re-enter itself, by a guard rather than by a time bound', () => {
     const a = makeTree([]);
     const direct = runGateRaw(a, { ...process.env, GATE_CHECK_ROOTS: realpathSync(a) });
@@ -267,8 +339,106 @@ describe('gate-check 0.3/0.4 prove themselves by executing a named test', () => 
       join(b, 'package.json'),
       JSON.stringify({ name: 'f', scripts: { verify: './scripts/gate-check.sh 0' } }),
     );
+    // M-07: the refusal exits 2 with its reason on stderr, and 0.2 used to discard both and call
+    // it "pnpm verify failing". A refusal is a run that did not happen, so it is UNPROVEN, and
+    // the reason travels with it -- otherwise the gate reports a failing verify that never ran.
     const out = runGate(b);
-    expect(verdict(out, '0.2')).toContain('FAIL');
+    expect(verdict(out, '0.2')).toContain('UNPROVEN');
+    expect(verdict(out, '0.2')).not.toContain('FAIL');
+    expect(verdict(out, '0.2')).toContain('re-entrant invocation');
     expect(out).toContain('GATE 0: not met');
+  }, 30_000);
+});
+
+// M-07 (#41): 0.2 ran `pnpm --silent run verify >/dev/null 2>&1` and mapped every non-zero exit to
+// "pnpm verify failing". pnpm absent, pnpm rejecting a flag this gate passes, no verify script at
+// all, and a run that refused itself all land on that same exit path -- so the gate reported a
+// failing check where no check had run. Fail-closed, but not true, and untrue is how M-01 started.
+
+describe('gate-check 0.2 tells a failing check from a runner that never ran', () => {
+  it('reports UNPROVEN, not FAIL, when a runner it depends on is not on PATH', () => {
+    const dir = withVerify(makeTree([]), 'true');
+    // Control: with both runners present this exact tree reports PASS, so every UNPROVEN below is
+    // the runner going missing rather than the fixture being unable to pass.
+    expect(verdict(runGate(dir), '0.2')).toContain('PASS');
+
+    for (const missing of ['pnpm', 'node'] as const) {
+      const other = missing === 'pnpm' ? 'node' : 'pnpm';
+      const path = pathWithout(missing);
+      expect(resolves(missing, path), missing).toBe(''); // the strip worked ...
+      expect(resolves(other, path), other).not.toBe(''); // ... and took nothing else with it
+
+      const out = runGateRaw(dir, { ...process.env, PATH: path }).out;
+      // 0.3 and 0.4 shell out to the same runner and must answer the same way.
+      for (const id of ['0.2', '0.3', '0.4'])
+        expect(verdict(out, id), `${missing} ${id}`).toContain(
+          `runner '${missing}' is not on PATH`,
+        );
+      expect(verdict(out, '0.2'), missing).not.toContain('FAIL');
+      expect(out, missing).toContain('GATE 0: not met'); // UNPROVEN is still not PASS
+    }
+  }, 30_000);
+
+  it('reports what the verify script returned once the runner is proven', () => {
+    const dir = makeTree([]);
+    // `exit 2` is the control for the refusal branch below: exit 2 is what the re-entrancy guard
+    // uses, and on its own it is not evidence that anything refused to run.
+    const cases: [string, string][] = [
+      ['true', 'PASS      pnpm verify green'],
+      ['false', 'FAIL      pnpm verify failing (exit 1)'],
+      ['exit 2', 'FAIL      pnpm verify failing (exit 2)'],
+    ];
+    for (const [script, want] of cases)
+      expect(verdict(runGate(withVerify(dir, script)), '0.2'), script).toContain(want);
+  }, 30_000);
+
+  it('does not read the text "verify" in package.json as a verify script', () => {
+    // The old predicate was `grep -q '\"verify\"' package.json`: text, not a script. pnpm exits 1
+    // for both of these, and the gate called that a failing verify. Nothing ran.
+    const dir = makeTree([]);
+    for (const body of [
+      '{"name":"f","private":true,"config":{"verify":"a key in the wrong place"}}',
+      '{"name":"f","private":true,"scripts":{"verify":""}}',
+      '{"name":"f","private":true,"scripts":{"verify":["true"]}}',
+    ]) {
+      expect(body).toContain('"verify"'); // the old predicate matched both
+      writeFileSync(join(dir, 'package.json'), body);
+      const v = verdict(runGate(dir), '0.2');
+      expect(v, body).toContain('no verify script');
+      expect(v, body).not.toContain('FAIL');
+    }
+  }, 30_000);
+
+  it('believes a runner only after a known-good and a known-bad control invocation', () => {
+    // Three runners that differ only in behaviour. If the verdict were the same for all three the
+    // controls would be measuring nothing, so the discrimination is the point: two of these must
+    // not produce a verdict about verify at all, and the third must.
+    const version = '[ "$1" = "--version" ] && { echo 13.0.0-fake; exit 0; }\n';
+    const dir = withVerify(makeTree([]), 'true'); // would PASS if the runner were taken on trust
+    const runners: { why: string; body: string; want: string; says: string }[] = [
+      {
+        why: 'rejects the global flag this gate passes, as pnpm 12 rejects an unknown flag',
+        body: `#!/bin/sh\n${version}for a in "$@"; do [ "$a" = "--silent" ] && { echo "error: unexpected argument '--silent' found" >&2; exit 2; }; done\nexit 0\n`,
+        want: 'UNPROVEN',
+        says: "pnpm 13.0.0-fake rejects the '--silent' this gate passes",
+      },
+      {
+        why: 'answers 0 to everything, including a script that does not exist',
+        body: `#!/bin/sh\n${version}exit 0\n`,
+        want: 'UNPROVEN',
+        says: 'which does not exist',
+      },
+      {
+        why: 'accepts the flag, fails the known-bad control, and reports verify as failing',
+        body: `#!/bin/sh\n${version}for a in "$@"; do [ "$a" = "--help" ] && exit 0; [ "$a" = "verify" ] && exit 1; done\nexit 1\n`,
+        want: 'FAIL',
+        says: 'pnpm verify failing (exit 1)',
+      },
+    ];
+    for (const r of runners) {
+      const out = runGateRaw(dir, { ...process.env, PATH: shimPath(dir, r.body) }).out;
+      expect(verdict(out, '0.2'), r.why).toContain(r.want);
+      expect(verdict(out, '0.2'), r.why).toContain(r.says);
+    }
   }, 30_000);
 });
