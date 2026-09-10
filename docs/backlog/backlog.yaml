@@ -639,7 +639,9 @@ issues:
       - "gate-check.sh:66 (`grep -q STOP_AND_USE_START docs/gates/*.md`) is a deliberate exclusion: that fact really is documentary. Say so rather than leaving it as an inconsistency"
       - "a machine-readable artifact written by the real test run is the suggested shape, but a results file is ALSO just text in a file -- it only counts as evidence if it is provenance-bound and freshness-bound"
       - "the artifact must carry the commit ref and timestamp of the run that produced it; missing, stale relative to HEAD, or unparseable is UNPROVEN, never PASS"
-      - "it lives under state/ and is gitignored, so it can never be committed to fake a pass"
+      - "but freshness is not authenticity: the overnight agent writes to the same filesystem the gate reads, and `git rev-parse HEAD` is one command away, so a forged artifact passes any HEAD check. Nor does HEAD-binding catch a dirty tree -- sources change while HEAD does not (CLAUDE.md section 3 draws exactly this line between basis.ref and basis.inputs)"
+      - "PREFERRED: since a named test does not re-enter the gate, the artifact's only reason to exist is gone. Run the test. Demote any artifact to an optional cache whose absence means run it, never UNPROVEN-by-default -- then forging it buys nothing because the gate re-runs anyway"
+      - "it lives under state/artifacts/, which IS gitignored -- state/ itself is not, so state/gate/results.json would be fully committable and the guarantee would evaporate"
     acceptance:
       - "no `grep -r` remains in gate-check.sh (test)"
       - "adding a .ts file containing the literal strings 0.3 and 0.4 used to grep for does not change any condition's verdict (test -- this is the exact M-01 regression)"
@@ -667,6 +669,7 @@ issues:
       - "do not edit scripts/audit-seams.sh or scripts/audit-identity.sh -- they are guardrail files requiring owner approval; the gate owns its own verdict semantics"
     acceptance:
       - "with zero .sql files present, 0.1 does not report unqualified PASS for invariant 8 (test)"
+      - "a tree whose only file under packages/domain is a zero-byte .keep or a one-line README does not report PASS for 0.1 (test -- verified: gate-check.sh:32 uses `find -type f -print -quit`, so ANY regular file arms it. This is armed today by design: P0-01 mandates a one-line README in every package folder, so 0.1 currently reports PASS with zero source files examined)"
       - "with packages/persistence/migrations/schema.sql present and clean, invariant 8 reports PASS (test). Name the path: audit-identity.sh globs migrations/*.sql and persistence/*/*.sql with globstar off, so a .sql at the repo root or at packages/persistence/x.sql is never examined"
       - "a tree where only apps/ exists does not report PASS for invariant 9, whose scan set is packages/domain and packages/protocol (test)"
       - "no audit script is modified: `git diff origin/main -- scripts/audit-seams.sh scripts/audit-identity.sh` is empty (origin/main, not main -- local main lags in a per-issue worktree)"
