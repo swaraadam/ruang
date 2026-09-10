@@ -25,8 +25,13 @@ case "$PHASE" in
     echo "0.1 vocabulary + identity audits"
     # Both audits guard every check with [[ -d ]] over these roots, so on a tree without them they
     # print PASS having scanned nothing. A check that did not run is UNPROVEN, never PASS.
+    # A directory existing is not a scan: `mkdir packages` alone previously produced PASS with
+    # zero files examined. Require at least one regular file under the roots that exist.
+    roots=(); for d in packages apps adapters; do [[ -d "$d" ]] && roots+=("$d"); done
     scanned=0
-    for d in packages apps adapters; do [[ -d "$d" ]] && scanned=1; done
+    if [[ ${#roots[@]} -gt 0 ]] && [[ -n "$(find "${roots[@]}" -type f -print -quit 2>/dev/null)" ]]; then
+      scanned=1
+    fi
     if ! ./scripts/audit-seams.sh >/dev/null 2>&1 || ! ./scripts/audit-identity.sh >/dev/null 2>&1; then
       fail "audits failing (run ./scripts/audit-seams.sh)"
     elif [[ $scanned -eq 0 ]]; then
@@ -44,12 +49,12 @@ case "$PHASE" in
 
     echo "0.3 gateway restart while live session survives"
     if ls adapters/host/darwin/**/*session*restart* >/dev/null 2>&1 || \
-       grep -rlq "session survives gateway restart" --include='*.ts' . 2>/dev/null; then
+       grep -rlq "session survives gateway restart" --include='*.ts' --exclude-dir=.sandboxes --exclude-dir=node_modules --exclude-dir=dist . 2>/dev/null; then
       pass "restart-survival test present (inspect its output before trusting it)"
     else unproven "restart survival" "no test found (P0-08)"; fi
 
     echo "0.4 Phase 0 contract tests"
-    if [[ -d packages/domain ]] && grep -rlq "contract" --include='*.test.ts' . 2>/dev/null; then
+    if [[ -d packages/domain ]] && grep -rlq "contract" --include='*.test.ts' --exclude-dir=.sandboxes --exclude-dir=node_modules --exclude-dir=dist . 2>/dev/null; then
       pass "contract suite present"; else unproven "contract suite" "not found (P0-13)"; fi
     ;;
   1)

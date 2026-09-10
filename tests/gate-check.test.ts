@@ -72,6 +72,40 @@ describe('gate-check phase 0', () => {
     expect(verdict(out, '0.1')).not.toContain('UNPROVEN');
   });
 
+  it('reports UNPROVEN when a scan root exists but holds no files', () => {
+    // A directory existing is not a scan. `mkdir packages` alone previously produced
+    // "PASS audits green over packages" with zero files examined -- the same defect this issue
+    // exists to fix, one notch down.
+    const dir = mkdtempSync(join(tmpdir(), 'gate-'));
+    mkdirSync(join(dir, 'scripts'));
+    for (const s of SCRIPTS) {
+      const dest = join(dir, 'scripts', s);
+      cpSync(join(repoRoot, 'scripts', s), dest);
+      chmodSync(dest, 0o755);
+    }
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', private: true }));
+    mkdirSync(join(dir, 'packages'));
+
+    const out = runGate(dir);
+    expect(verdict(out, '0.1')).toContain('UNPROVEN');
+    expect(out.match(/^\s*PASS\b.*$/gm) ?? []).toEqual([]);
+  });
+
+  it("does not certify 0.3 or 0.4 from another agent's unmerged sandbox", () => {
+    // Both greps walk `.`, so a .skip in .sandboxes/ would let main's gate certify a Phase 0 exit
+    // condition from code that was never merged. vitest.config.ts already excludes these paths.
+    const dir = makeTree(['packages/domain']);
+    mkdirSync(join(dir, '.sandboxes/OTHER/tests'), { recursive: true });
+    writeFileSync(
+      join(dir, '.sandboxes/OTHER/tests/contract.test.ts'),
+      "it.skip('session survives gateway restart', () => {});\n",
+    );
+
+    const out = runGate(dir);
+    expect(verdict(out, '0.3')).toContain('UNPROVEN');
+    expect(verdict(out, '0.4')).toContain('UNPROVEN');
+  });
+
   it('still fails 0.1 when a populated tree actually violates an invariant', () => {
     // A PASS must mean "scanned and clean", not merely "scanned".
     const dir = makeTree(['packages/domain']);
