@@ -565,7 +565,7 @@ issues:
       - "`export const commit = 1; // see foo.test.ts` fails, while a genuine packages/domain/x.test.ts file is still exempt (test)"
       - "git vocabulary in adapters/domain/code and macOS vocabulary in adapters/host/darwin still pass (test)"
       - "no audit is weakened: every violation class the audits caught before this issue still fails"
-      - "no false positives: different, difference, commitment, branchless and merged still pass in packages/domain (test)"
+      - "no false positives: different, difference, commitment and branchless still pass in packages/domain (test)"
       - "basis_ref and basis.ref still pass -- they are the mandated core vocabulary (CLAUDE.md section 3, blueprint 12.3), not a leak (test)"
 
   - id: M-03
@@ -589,7 +589,7 @@ issues:
       - "a drift check fails if the workflow job name and the branch-protection required context stop matching (they agree today; nothing detects it if they diverge)"
       - "a packageManager field pins the pnpm major, and CI uses it rather than a corepack default"
       - "CI resolves the pinned pnpm major rather than a corepack default, shown by the version line in the run log"
-      - "docs name each guardrail path from the settings deny list (.github/workflows/**, .claude/settings.json, scripts/audit-seams.sh, scripts/audit-identity.sh) and state the escalation route for each"
+      - "docs name every guardrail path in the settings deny list (docs/blueprint/**, .github/workflows/**, .claude/settings.json, scripts/audit-seams.sh, scripts/audit-identity.sh) and state the escalation route for each"
 
   - id: M-04
     title: "Decide module resolution: emitted ESM must resolve under node"
