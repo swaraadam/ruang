@@ -153,7 +153,7 @@ issues:
     phase: 0
     agent: host-darwin-engineer
     size: M
-    depends_on: [P0-07]
+    depends_on: [P0-07, M-05]
     refs: "6.2, 9.2, 22"
     goal: The load-bearing Phase 0 exit proof.
     scope:
@@ -630,15 +630,22 @@ issues:
       read its result.
     scope:
       - "0.3 and 0.4 must execute a named test and read its exit code, or report UNPROVEN -- no third option"
-      - "ban `grep -rl` and `grep -rlq` from gate-check.sh entirely; presence of text is never evidence a check passed"
+      - "ban `grep -r` from gate-check.sh entirely; presence of text is never evidence a check passed"
+      - "0.3 also infers from a filename glob (`ls adapters/host/darwin/**/*session*restart*`), which is the same defect without a grep: a zero-byte file with a matching name flips it to PASS. A filename is not evidence either"
+      - "the positive rule is the real constraint, not the banned spellings: a condition runs something and reads its result, or reports UNPROVEN"
+      - "print the command that proves each condition, per .claude/skills/phase-gates/SKILL.md"
       - "0.3's PASS text currently reads 'inspect its output before trusting it', which is UNPROVEN with extra words -- resolve it"
-      - "avoid the recursion that blocks this: gate-check 0.2 shells out to `pnpm run verify`, which runs the test suite, so a condition that runs the suite re-enters the gate"
-      - "a machine-readable artifact written by the real test run (a JSON result file the gate reads) is the suggested shape, but the decision is the implementer's"
+      - "recursion applies to running the WHOLE suite: 0.2 shells out to `pnpm run verify` -> vitest -> tests/gate-check.test.ts -> the gate. Running a single NAMED test does not re-enter, so the mandate above is implementable"
+      - "gate-check.sh:66 (`grep -q STOP_AND_USE_START docs/gates/*.md`) is a deliberate exclusion: that fact really is documentary. Say so rather than leaving it as an inconsistency"
+      - "a machine-readable artifact written by the real test run is the suggested shape, but a results file is ALSO just text in a file -- it only counts as evidence if it is provenance-bound and freshness-bound"
+      - "the artifact must carry the commit ref and timestamp of the run that produced it; missing, stale relative to HEAD, or unparseable is UNPROVEN, never PASS"
+      - "it lives under state/ and is gitignored, so it can never be committed to fake a pass"
     acceptance:
       - "no `grep -r` remains in gate-check.sh (test)"
       - "adding a .ts file containing the literal strings 0.3 and 0.4 used to grep for does not change any condition's verdict (test -- this is the exact M-01 regression)"
+      - "adding a zero-byte file named adapters/host/darwin/tests/session-restart.test.ts does not change 0.3's verdict (test -- verified today: on main it flips UNPROVEN to PASS)"
       - "0.3 and 0.4 report PASS only when a named test actually ran and exited 0, proven by making that test fail and observing the verdict change"
-      - "running the gate does not re-enter itself: `./scripts/gate-check.sh 0` terminates in under 60s with no recursive invocation (test)"
+      - "running the gate does not re-enter itself: assert a re-entrancy guard, not a wall-clock bound. A bounded two-level recursion finishes quickly while still re-entering, and a legitimately slow verify is not a recursion (test)"
       - "`./scripts/gate-check.sh 0` output is reproduced in the evidence for: all-unproven, condition-passing, and condition-failing cases"
 
   - id: M-06
@@ -660,9 +667,9 @@ issues:
       - "do not edit scripts/audit-seams.sh or scripts/audit-identity.sh -- they are guardrail files requiring owner approval; the gate owns its own verdict semantics"
     acceptance:
       - "with zero .sql files present, 0.1 does not report unqualified PASS for invariant 8 (test)"
-      - "with a .sql file present and clean, invariant 8 reports PASS (test)"
+      - "with packages/persistence/migrations/schema.sql present and clean, invariant 8 reports PASS (test). Name the path: audit-identity.sh globs migrations/*.sql and persistence/*/*.sql with globstar off, so a .sql at the repo root or at packages/persistence/x.sql is never examined"
       - "a tree where only apps/ exists does not report PASS for invariant 9, whose scan set is packages/domain and packages/protocol (test)"
-      - "no audit script is modified: `git diff main -- scripts/audit-seams.sh scripts/audit-identity.sh` is empty"
+      - "no audit script is modified: `git diff origin/main -- scripts/audit-seams.sh scripts/audit-identity.sh` is empty (origin/main, not main -- local main lags in a per-issue worktree)"
 
   - id: M-07
     title: "gate-check must distinguish a failing check from a runner that never ran"
@@ -721,12 +728,14 @@ issues:
       one too, which is worse than it being openly advisory. This was not probed -- deliberately, since
       testing it would be an attempt to route around a guardrail.
     scope:
-      - "determine empirically whether Write and shell redirection are blocked on the four Edit-denied paths"
+      - "the two protected sets are NOT the same set and neither is 'the four paths'. Edit-denied: docs/blueprint/**, .github/workflows/**, .claude/settings.json, scripts/audit-seams.sh, scripts/audit-identity.sh. CI-protected: .claude/settings.json, .github/workflows/, scripts/audit-*.sh, CLAUDE.md. CLAUDE.md has no Edit deny; docs/blueprint/** is absent from CI. Enumerate the union before acting"
+      - "determine empirically whether Write and shell redirection are blocked on each path in that union"
+      - "two holes are provable without probing anything: Bash(python3 *) is allowed and can write any file regardless of the Edit denies; and .claude/settings.json allows Bash(gh pr merge * --squash --delete-branch*) and Bash(git push -u origin *), which sit against CLAUDE.md section 8 'Landing is the owner's decision'"
       - "if they are not, either extend the deny rules or document the deny list as advisory with the CI job as the boundary"
       - "extend guardrails.yml coverage to .claude/agents/** and docs/adr/** -- the landing gate definition and the decision record are currently unprotected"
       - "the owner-approved label can currently be applied by the agent's own token; decide whether that should remain true"
     acceptance:
-      - "for each of the four guardrail paths, the result of a Write attempt is recorded (blocked or not)"
+      - "for each path in the enumerated union, the result of a Write attempt and of a python3 file write is recorded (blocked or not)"
       - "guardrails.yml protects .claude/agents/** and docs/adr/** as well as the current four patterns"
       - "docs state which mechanism is the real boundary and which is advisory"
       - "no guardrail file is weakened by this issue: any change to them carries the owner-approved label"
