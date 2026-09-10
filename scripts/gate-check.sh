@@ -23,12 +23,23 @@ case "$PHASE" in
     ;;
   0)
     echo "0.1 vocabulary + identity audits"
-    if ./scripts/audit-seams.sh >/dev/null 2>&1 && ./scripts/audit-identity.sh >/dev/null 2>&1; then
-      pass "audits green"; else fail "audits failing (run ./scripts/audit-seams.sh)"; fi
+    # Both audits guard every check with [[ -d ]] over these roots, so on a tree without them they
+    # print PASS having scanned nothing. A check that did not run is UNPROVEN, never PASS.
+    scanned=0
+    for d in packages apps adapters; do [[ -d "$d" ]] && scanned=1; done
+    if ! ./scripts/audit-seams.sh >/dev/null 2>&1 || ! ./scripts/audit-identity.sh >/dev/null 2>&1; then
+      fail "audits failing (run ./scripts/audit-seams.sh)"
+    elif [[ $scanned -eq 0 ]]; then
+      unproven "audits" "green but vacuous — no packages/, apps/ or adapters/ to scan (P0-01)"
+    else
+      pass "audits green over $(ls -d packages apps adapters 2>/dev/null | tr '\n' ' ')"
+    fi
 
     echo "0.2 verify gate"
+    # `pnpm -s` is rejected by pnpm >=12 (`unexpected argument '-s'`), which made this report FAIL
+    # unconditionally regardless of the real result. Use the long form.
     if [[ -f package.json ]] && grep -q '"verify"' package.json 2>/dev/null; then
-      if pnpm -s verify >/dev/null 2>&1; then pass "pnpm verify green"; else fail "pnpm verify failing"; fi
+      if pnpm --silent run verify >/dev/null 2>&1; then pass "pnpm verify green"; else fail "pnpm verify failing"; fi
     else unproven "pnpm verify" "no verify script yet (P0-01)"; fi
 
     echo "0.3 gateway restart while live session survives"
