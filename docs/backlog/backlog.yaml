@@ -246,7 +246,7 @@ issues:
     phase: 0
     agent: contract-test-engineer
     size: L
-    depends_on: [P0-04]
+    depends_on: [P0-04, M-05]
     refs: "20.1, 20.2"
     goal: The invariants become mechanical rather than remembered.
     scope:
@@ -613,3 +613,120 @@ issues:
       - "the failure mode is caught at build time, not at import time — an extensionless emitted specifier fails verify (test)"
       - "the chosen mode is recorded with its reasoning, including what it means for apps/web under Vite and apps/gateway under node"
       - "P0-01's existing single-file members still pass unchanged"
+
+  - id: M-05
+    title: "gate-check conditions must prove themselves by running a test, not by grepping for a string"
+    phase: 0
+    agent: contract-test-engineer
+    size: M
+    depends_on: [P0-01]
+    refs: "20, 22, 23"
+    goal: |
+      Conditions 0.3 and 0.4 assert a phase-exit condition from the textual presence of a string in any
+      .ts file. That is not evidence, and it is actively dangerous: during M-01 a regression test whose
+      fixture strings happened to be those phrases made the gate report "GATE 0: all conditions PASS",
+      exit 0, with P0-08 and P0-13 never started. Narrowing where the grep looks does not fix it -- that
+      was tried and it created a second instance of the same defect. A condition must run something and
+      read its result.
+    scope:
+      - "0.3 and 0.4 must execute a named test and read its exit code, or report UNPROVEN -- no third option"
+      - "ban `grep -rl` and `grep -rlq` from gate-check.sh entirely; presence of text is never evidence a check passed"
+      - "0.3's PASS text currently reads 'inspect its output before trusting it', which is UNPROVEN with extra words -- resolve it"
+      - "avoid the recursion that blocks this: gate-check 0.2 shells out to `pnpm run verify`, which runs the test suite, so a condition that runs the suite re-enters the gate"
+      - "a machine-readable artifact written by the real test run (a JSON result file the gate reads) is the suggested shape, but the decision is the implementer's"
+    acceptance:
+      - "no `grep -r` remains in gate-check.sh (test)"
+      - "adding a .ts file containing the literal strings 0.3 and 0.4 used to grep for does not change any condition's verdict (test -- this is the exact M-01 regression)"
+      - "0.3 and 0.4 report PASS only when a named test actually ran and exited 0, proven by making that test fail and observing the verdict change"
+      - "running the gate does not re-enter itself: `./scripts/gate-check.sh 0` terminates in under 60s with no recursive invocation (test)"
+      - "`./scripts/gate-check.sh 0` output is reproduced in the evidence for: all-unproven, condition-passing, and condition-failing cases"
+
+  - id: M-06
+    title: "0.1 must not claim coverage the audits do not have"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [M-05]
+    refs: "21, 23"
+    goal: |
+      0.1 prints "audits green over adapters apps packages", which reads as full coverage. It is not.
+      The repository contains zero .sql files, so the identity audit's durable-table check -- the one
+      enforcing invariant 8's owner_id/org_node_id -- examines nothing while 0.1 reports PASS. A scan
+      root existing, or even containing files, does not mean every check inside the audits ran.
+    scope:
+      - "report per-check coverage rather than a single PASS: which invariant checks actually examined files, and which had nothing to examine"
+      - "a check with nothing to examine is UNPROVEN for that invariant, even when its sibling checks pass"
+      - "invariant 8's SQL half is the live example: zero .sql files today"
+      - "do not edit scripts/audit-seams.sh or scripts/audit-identity.sh -- they are guardrail files requiring owner approval; the gate owns its own verdict semantics"
+    acceptance:
+      - "with zero .sql files present, 0.1 does not report unqualified PASS for invariant 8 (test)"
+      - "with a .sql file present and clean, invariant 8 reports PASS (test)"
+      - "a tree where only apps/ exists does not report PASS for invariant 9, whose scan set is packages/domain and packages/protocol (test)"
+      - "no audit script is modified: `git diff main -- scripts/audit-seams.sh scripts/audit-identity.sh` is empty"
+
+  - id: M-07
+    title: "gate-check must distinguish a failing check from a runner that never ran"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [M-05]
+    refs: "23"
+    goal: |
+      0.2 runs `pnpm --silent run verify >/dev/null 2>&1` and treats any non-zero exit as "verify
+      failing". It cannot tell a real failure from pnpm being absent, or from a future pnpm rejecting
+      --silent the way pnpm 12 rejected -s. That is the exact shape of the bug M-01 fixed, still present
+      one level up. It fails closed, so it is not a safety hole -- it is a truthfulness hole.
+    scope:
+      - "guard on the runner being present and usable before interpreting its exit code"
+      - "a missing or incompatible runner is UNPROVEN, not FAIL -- the check did not run"
+      - "the same reasoning applies to any other external command a condition depends on"
+    acceptance:
+      - "with pnpm unavailable on PATH, 0.2 reports UNPROVEN and not FAIL (test)"
+      - "with a verify script that exits non-zero, 0.2 reports FAIL (test)"
+      - "with a verify script that exits 0, 0.2 reports PASS (test)"
+
+  - id: M-08
+    title: "CI must run on main, not only on pull requests"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    blocked_gate: "owner must apply the workflow change, or grant an agent Edit on .github/workflows/** (it is a guardrail path requiring the owner-approved label)"
+    refs: "20, 22"
+    goal: |
+      Both workflows trigger on pull_request only, so nothing ever checks main. An overnight run's
+      "CI red on main" stop condition therefore has no signal behind it, and a bad merge -- or a merge
+      whose result differs from what was tested on the branch -- is invisible until the next PR.
+    scope:
+      - "run verify on push to main as well as on pull_request"
+      - "decide whether guardrails should also run on main, or whether it is inherently a PR-time check"
+      - "state what an operator should do when main goes red, since no PR is open to fix"
+    acceptance:
+      - "a push to main triggers verify, shown by a run in the Actions list with event=push"
+      - "the branch-protection required contexts still match the workflow job names after the change"
+      - "an unattended run can distinguish 'main is green' from 'main was never checked'"
+
+  - id: M-09
+    title: "Close the Edit/Write asymmetry on guardrail paths"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    blocked_gate: "owner must change .claude/settings.json -- it is a guardrail path and the agent is denied Edit on it by design"
+    refs: "21"
+    goal: |
+      The deny list protects guardrail paths with Edit(...) rules. Edit and Write are separate tools, so
+      the rules may not cover a Write to the same path, and nothing covers a shell redirect. The
+      guardrail CI job is the real enforcement boundary; the deny list currently reads as though it is
+      one too, which is worse than it being openly advisory. This was not probed -- deliberately, since
+      testing it would be an attempt to route around a guardrail.
+    scope:
+      - "determine empirically whether Write and shell redirection are blocked on the four Edit-denied paths"
+      - "if they are not, either extend the deny rules or document the deny list as advisory with the CI job as the boundary"
+      - "extend guardrails.yml coverage to .claude/agents/** and docs/adr/** -- the landing gate definition and the decision record are currently unprotected"
+      - "the owner-approved label can currently be applied by the agent's own token; decide whether that should remain true"
+    acceptance:
+      - "for each of the four guardrail paths, the result of a Write attempt is recorded (blocked or not)"
+      - "guardrails.yml protects .claude/agents/** and docs/adr/** as well as the current four patterns"
+      - "docs state which mechanism is the real boundary and which is advisory"
+      - "no guardrail file is weakened by this issue: any change to them carries the owner-approved label"
