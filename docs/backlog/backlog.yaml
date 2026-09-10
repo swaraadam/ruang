@@ -547,10 +547,11 @@ issues:
     agent: contract-test-engineer
     size: S
     depends_on: [P0-01]
+    blocked_gate: "owner must apply the audit-script patches, or grant an agent Edit on scripts/audit-*.sh (both are in the settings deny list)"
     refs: "21"
     goal: |
       Invariants 8 and 9 are currently enforced against prose more than against code. The audits match bare
-      words, but real TypeScript writes commitSha and basis_ref, so the vocabulary rules leak exactly where
+      words, but real TypeScript writes commitSha and commit_sha, so the vocabulary rules leak exactly where
       the code will be written.
     scope:
       - "seam audit must catch compound and plural forms: commitSha, commit_sha, gitRef, commits, merged, diffs"
@@ -564,6 +565,8 @@ issues:
       - "`export const commit = 1; // see foo.test.ts` fails, while a genuine packages/domain/x.test.ts file is still exempt (test)"
       - "git vocabulary in adapters/domain/code and macOS vocabulary in adapters/host/darwin still pass (test)"
       - "no audit is weakened: every violation class the audits caught before this issue still fails"
+      - "no false positives: different, difference, commitment, branchless and merged still pass in packages/domain (test)"
+      - "basis_ref and basis.ref still pass -- they are the mandated core vocabulary (CLAUDE.md section 3, blueprint 12.3), not a leak (test)"
 
   - id: M-03
     title: "CI workflow as tracked configuration"
@@ -571,6 +574,7 @@ issues:
     agent: contract-test-engineer
     size: S
     depends_on: [P0-01]
+    blocked_gate: "owner must apply the workflow change, or grant an agent Edit on .github/workflows/** (it is in the settings deny list)"
     refs: "20, 22"
     goal: |
       The verify workflow and the branch protection it backs are now load-bearing for agent landing
@@ -582,10 +586,10 @@ issues:
       - "record that agents are denied Edit on .github/workflows/** and why"
       - "state the ordering constraint: `pnpm install --frozen-lockfile` needs a committed lockfile, so CI cannot pass on a branch whose base lacks one"
     acceptance:
-      - "the workflow's required check name matches the context in branch protection, verified against `gh api repos/:owner/:repo/branches/main/protection`"
+      - "a drift check fails if the workflow job name and the branch-protection required context stop matching (they agree today; nothing detects it if they diverge)"
       - "a packageManager field pins the pnpm major, and CI uses it rather than a corepack default"
-      - "CI is green on this issue's own PR"
-      - "docs state which files are guardrails agents may not edit, and what to do instead"
+      - "CI resolves the pinned pnpm major rather than a corepack default, shown by the version line in the run log"
+      - "docs name each guardrail path from the settings deny list (.github/workflows/**, .claude/settings.json, scripts/audit-seams.sh, scripts/audit-identity.sh) and state the escalation route for each"
 
   - id: M-04
     title: "Decide module resolution: emitted ESM must resolve under node"
