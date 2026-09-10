@@ -45,7 +45,7 @@ check_by_running(){
   pnpm --silent exec vitest run --reporter=json --outputFile="$out" "$@" >/dev/null 2>&1
   rc=$?
   counts="$(node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));
-process.stdout.write([j.numPassedTests|0,j.numFailedTests|0,j.numPendingTests|0].join(" "))' \
+process.stdout.write([j.numPassedTests|0,j.numFailedTests|0,(j.numPendingTests|0)+(j.numTodoTests|0)].join(" "))' \
     "$out" 2>/dev/null)"
   rm -f "$out"
   [[ -z "$counts" ]] && { unproven "$label" "runner produced no result (exit $rc); $owner"; return; }
@@ -132,9 +132,9 @@ case "$PHASE" in
     unproven "canonical origin" "external gate: docs/gates/phase-minus-1.md"
     echo "1.3 STOP & USE clock"
     # Deliberate exclusion from the run-something rule, not an oversight. Every other condition
-    # asserts a behaviour works, which only an execution shows. This one asserts a date was
-    # written down: that fact IS documentary, so reading the document is the whole check. Fixed
-    # path, never a search across the tree.
+    # asserts a behaviour; this fact is documentary. BUT the grep matches the KEY, not a
+    # value, and both docs hold `STOP_AND_USE_START:` + a blank -- this PASS is FALSE today.
+    # Left as-is: M-05 scopes 0.3/0.4, this is Phase 1. Needs its own issue.
     proof "grep -q STOP_AND_USE_START docs/gates/*.md"
     if grep -q "STOP_AND_USE_START" docs/gates/*.md 2>/dev/null; then pass "clock recorded"; else unproven "stop-and-use clock" "record the start date (P1-09)"; fi
     ;;

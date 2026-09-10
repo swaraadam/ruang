@@ -211,9 +211,14 @@ describe('gate-check 0.3/0.4 prove themselves by executing a named test', () => 
     put(dir, RESTART_TEST, oneTest(false));
     expect(verdict(runGate(dir), '0.3')).toContain('FAIL');
 
-    // And a collected-but-skipped test is not a result either.
-    put(dir, RESTART_TEST, "import { it } from 'vitest';\nit.skip('nope', () => {});\n");
-    expect(verdict(runGate(dir), '0.3')).toContain('UNPROVEN');
+    // Neither a skip nor a todo is a result. Each paired with a PASSING test so p>0 and only
+    // the skip branch can produce this; a stub-only file yields p==0, indistinguishable from
+    // nothing running. it.todo lands in a fourth vitest counter and is how a half-written
+    // P0-08 would look.
+    for (const stub of ['it.skip', 'it.todo']) {
+      put(dir, RESTART_TEST, oneTest(true) + `${stub}('the unwritten half', () => {});\n`);
+      expect(verdict(runGate(dir), '0.3'), stub).toContain('skipped');
+    }
   }, 30_000);
 
   it('is unmoved by a hand-written artifact with a correct HEAD and a fresh timestamp', () => {
