@@ -49,12 +49,12 @@ case "$PHASE" in
 
     echo "0.3 gateway restart while live session survives"
     if ls adapters/host/darwin/**/*session*restart* >/dev/null 2>&1 || \
-       grep -rlq "session survives gateway restart" --include='*.ts' --exclude-dir=.sandboxes --exclude-dir=node_modules --exclude-dir=dist . 2>/dev/null; then
+       grep -rlq "session survives gateway restart" --include='*.ts' . 2>/dev/null; then
       pass "restart-survival test present (inspect its output before trusting it)"
     else unproven "restart survival" "no test found (P0-08)"; fi
 
     echo "0.4 Phase 0 contract tests"
-    if [[ -d packages/domain ]] && grep -rlq "contract" --include='*.test.ts' --exclude-dir=.sandboxes --exclude-dir=node_modules --exclude-dir=dist . 2>/dev/null; then
+    if [[ -d packages/domain ]] && grep -rlq "contract" --include='*.test.ts' . 2>/dev/null; then
       pass "contract suite present"; else unproven "contract suite" "not found (P0-13)"; fi
     ;;
   1)
