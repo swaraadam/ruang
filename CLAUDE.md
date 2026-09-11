@@ -169,4 +169,7 @@ Phase 1 ends in a **mandatory two-week stop-and-use period**. Do not open Phase 
 - Tests are contract tests where a seam exists, unit tests otherwise. No mock that asserts an
   implementation detail of a seam.
 - Comments explain why, not what. Reference the blueprint section for any non-obvious rule.
+- Contract tests live in `tests/contract/` and are named `*.contract.test.ts`. Gate condition 0.4
+  selects that directory; a contract test anywhere else is invisible to the gate, which is the
+  point (no adapter-private contract test). `vitest.config.ts` sets no global `retry`.
 - Commit messages: `<area>: <imperative summary>` + `Refs #<issue>`.

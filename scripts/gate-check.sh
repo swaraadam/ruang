@@ -201,9 +201,12 @@ case "$PHASE" in
       adapters/host/darwin/tests/session-restart.test.ts
 
     echo "0.4 Phase 0 contract tests"
-    # Contract tests are named *.contract.test.ts. vitest positional filters are substring matches
-    # on the file path, so this selects the suite without enumerating it.
-    check_by_running "contract suite" "declared selector *.contract.test.ts - P0-13" contract.test.ts
+    # The suite is selected by WHERE it lives, not by what its files are called. One shared
+    # directory is the same structural fact as "no adapter-private contract test" (P0-13
+    # acceptance 2): a contract test under adapters/ is not merely misnamed, it is unreachable
+    # from here. vitest positional filters are substring matches on the file path, so the
+    # directory selects the suite without enumerating it.
+    check_by_running "contract suite" "declared selector tests/contract/ - P0-13" tests/contract/
     ;;
   1)
     EXPECTED=3
