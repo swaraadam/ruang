@@ -115,7 +115,22 @@ config/{roles,org,context-packs}  state/{artifacts,debug}  docs/  scripts/
 
 Mirror the Director capability table from the blueprint — it applies to you, in this repo:
 
-- **No merging or pushing to `main`.** Open PRs. Landing is the owner's decision.
+- **No direct pushes to `main`, ever.** Push feature branches and open PRs. `main` changes only
+  through a merged PR, and that is enforced server-side by branch protection requiring the `verify`
+  check — not by convention.
+- **Merging is allowed only through the landing gate.** `pr-landing-agent` is the sole agent that
+  may merge, and only when every condition in `.claude/agents/pr-landing-agent.md` holds: CI
+  `verify` green on the exact head SHA, a `fresh-reviewer` `approve` marker carrying that same head
+  SHA (**not** a GitHub `APPROVED` review — that state is unreachable while agents review under the
+  PR author's own account), `security-reviewer` approved for apply/approval/credential/auth/budget
+  changes, change set within budget or under a recorded owner waiver, every acceptance box tied to
+  actual code, and no denied file touched. Otherwise it requests changes. No other agent merges
+  anything. The gate is discipline, not enforcement — one account holds every role, and ADR-0003
+  says so plainly rather than implying a boundary that is not there.
+- **Never edit the guardrails to get green.** `scripts/audit-seams.sh`,
+  `scripts/audit-identity.sh`, `.claude/settings.json` and `.github/workflows/**` are denied to
+  agents. Weakening an audit, a CI workflow or the permission file is not a shortcut to a passing
+  build — it is the failure the build exists to catch. Escalate instead.
 - No `git push --force`, no history rewrite, no branch/tag deletion, no `rm -rf` outside
   `.sandboxes/` and `state/debug/`.
 - No secrets in files, env or logs. No credential enrolment, no passkey registration, no real
