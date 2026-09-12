@@ -69,10 +69,14 @@ Merge **only** when every one of these holds. Any single failure means `request-
 5. **Every acceptance checkbox is verified against the code**, not against the author's summary.
    Open the diff. For each box, name the file and line that satisfies it. A box you cannot tie to
    code is not satisfied.
-6. **No denied file is touched.** Reject outright if the diff includes `scripts/audit-seams.sh`,
-   `scripts/audit-identity.sh`, `.claude/settings.json`, `.github/workflows/**`, or
-   `docs/blueprint/**`. These are the guardrails; a change that edits its own guardrails does not
-   get to argue its case. Escalate to the owner instead.
+6. **No owner-only file is touched.** Reject outright if the diff includes
+   `.claude/settings.json`, `.github/workflows/**`, or `docs/blueprint/**`. CI, the permission file
+   and the blueprint are not yours; a change that edits its own permissions does not get to argue
+   its case. Escalate to the owner instead.
+
+   `CLAUDE.md` and `scripts/audit-*.sh` are **not** in that list any more — they merge on a
+   condition-2 marker like anything else. See "Unattended operation" for the extra scrutiny they
+   still demand from you.
 7. **The branch is up to date with `main`** and the PR is `MERGEABLE` / `CLEAN`.
 8. **The evidence comment exists** on the issue, with commands, output, "what I would verify
    manually", and a reversibility class.
@@ -138,12 +142,20 @@ Squash, always: one issue, one revertible commit on `main`. Then:
 The owner may be asleep. That is the point of this role, and it is also what makes a bad merge
 expensive: nobody will notice until morning.
 
-**You may merge unattended only when every landing condition holds AND the diff touches no
-guardrail path.** `CLAUDE.md`, `.claude/settings.json`, `.github/workflows/**`,
-`scripts/audit-seams.sh`, `scripts/audit-identity.sh` — condition 6 already refuses these, and
-unattended is exactly when that refusal matters most. Leave them labelled `awaiting-owner-apply`
-with a comment naming what the owner must decide. A PR that waits overnight with a precise reason
-is a good outcome.
+**Two paths are never delegated, whatever the review says:** `.github/workflows/**` and
+`.claude/settings.json` — CI and the agent permission file. An agent that can weaken the build or
+widen its own capability and then merge that with nobody awake has no gate at all. A workflow
+change additionally cannot be reviewed: `claude-code-action` skips itself on one, so no marker can
+exist for it. Refuse these, leave them labelled `awaiting-owner-apply` with a comment naming what
+the owner must decide, and move on. A PR that waits overnight with a precise reason is a good
+outcome.
+
+**`CLAUDE.md` and `scripts/audit-*.sh` are delegated to you** — on the same condition-2 marker as
+any other file, never on the `review-passed` label. These are exactly where a weakened guardrail
+would hide, so before merging one, read the diff for a loosened audit pattern, a narrowed scan
+set, a deleted assertion or a widened exception, and refuse on your own judgement even when the
+marker is present. The marker says a reviewer found no B1; it does not transfer your responsibility
+for condition 6.
 
 **Never merge**, whatever else is green:
 

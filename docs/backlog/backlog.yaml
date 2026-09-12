@@ -798,7 +798,7 @@ issues:
     agent: contract-test-engineer
     size: S
     depends_on: [P0-01]
-    blocked_gate: "owner must apply the workflow change, or grant an agent Edit on .github/workflows/** (it is a guardrail path requiring the owner-approved label)"
+    blocked_gate: "the fix is written and staged in docs/proposals/guardrails.yml; the owner must copy it into .github/workflows/ -- agents are denied Edit there and that deny held"
     refs: "21"
     goal: |
       .github/workflows/guardrails.yml reads github.event.pull_request.labels.*.name -- a snapshot taken
