@@ -4,3 +4,8 @@ packages:
   - 'adapters/domain/*'
   - 'adapters/host/*'
   - 'adapters/provider/*'
+# better-sqlite3 is a native module: it compiles or downloads a prebuilt binary at install time,
+# which pnpm blocks by default. Declared here rather than approved interactively so CI makes the
+# same decision this machine did -- an interactive approval would leave CI unable to load it.
+allowBuilds:
+  better-sqlite3: true
