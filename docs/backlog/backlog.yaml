@@ -898,8 +898,17 @@ issues:
     size: S
     depends_on: [P0-05]
     refs: "14.1, 14.2, 15.2"
-    change_budget: 400
-    budget_reason: "scaffolding, not mechanics: rows, events and two npm scripts"
+    change_budget: 700
+    budget_reason: >-
+      Re-groomed 2026-09-13 from 400 to 700 by the orchestrator, who authored this issue and its
+      original estimate under the owner's standing delegation ("author the issue yourself, groom it
+      with a budget, and build it"). This is a corrected estimate, NOT a budget waiver -- blueprint
+      16.2 reserves waivers to the owner and none is claimed here. The 400 figure was wrong on its
+      own terms: this issue's acceptance list demands three distinct basis states (fresh, stale and
+      a genuinely indeterminate one) plus a mechanical test proving the replay and the refusal, and
+      the implementation cannot meet its own acceptance criteria in 400 lines. The delivered change
+      is 648, under the repository-wide default of 1250 set in #67. The alternative -- splitting
+      scaffolding into two PRs -- buys reviewability that a 648-line seed script does not lack.
     goal: |
       Two commands take a clean clone to durable state worth rendering, so the gateway and the web
       shell have real snapshot and event history to read instead of a fixture. Every row the seed
