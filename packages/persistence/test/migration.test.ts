@@ -39,7 +39,7 @@ describe('migration v1 is locked', () => {
     // SQLite, so both sides should normalise `sqlite_schema.sql` identically. A difference would
     // mean the two hosts disagree about the schema, which is worth stopping for.
     const hash = createHash('sha256').update(schemaFingerprint(db)).digest('hex');
-    expect(hash).toBe('73fe1ab98ae72d8c10339f5aa7cc4f776608565bfa972945d8647c12686e1d64');
+    expect(hash).toBe('802d0eb1beb32dadba2400d61d08ae3e10b33ae61077ee2358e90afcad49dff6');
     db.close();
   });
 
@@ -128,6 +128,42 @@ describe('identity columns are mandatory from v1 (invariant 8, §14.2)', () => {
         )
         .run(),
     ).toThrow(/FOREIGN KEY constraint failed/);
+  });
+});
+
+describe('the states the blueprint names are all representable', () => {
+  /**
+   * Both of these were wrong in the first version of v1 and caught in review. They are pinned
+   * because v1 cannot be edited afterwards: a missing state here is not a bug to fix later, it is
+   * a state that can never be stored without a v2.
+   */
+  it('keeps all five §15.3 steer delivery states, including attempted', () => {
+    // §15.3: requested -> attempted -> acknowledged | failed | unresolved. `attempted` emits no
+    // durable event (Appendix A.1 has four steer events), so the schema is its only home.
+    const db = openMemoryDatabase();
+    const sql = (
+      db.prepare(`SELECT sql FROM sqlite_schema WHERE name='steer'`).get() as { sql: string }
+    ).sql;
+    for (const state of ['requested', 'attempted', 'acknowledged', 'failed', 'unresolved']) {
+      expect(sql).toContain(`'${state}'`);
+    }
+    db.close();
+  });
+
+  it('lets one logical role hold several versions (§14.1 "versioned")', () => {
+    const db = openMemoryDatabase();
+    db.prepare(`INSERT INTO owner (id, display, created_at) VALUES ('o','O','t')`).run();
+    db.prepare(`INSERT INTO org_node (id, owner_id, name) VALUES ('n','o','root')`).run();
+    const ins = db.prepare(
+      `INSERT INTO role (id, owner_id, org_node_id, name, version, charter, capabilities)
+       VALUES (?,'o','n','reviewer',?,'c','[]')`,
+    );
+    ins.run('r1', 1);
+    ins.run('r2', 2);
+    expect(db.prepare(`SELECT count(*) c FROM role WHERE name='reviewer'`).get()).toEqual({ c: 2 });
+    // ...and the same version twice is still refused.
+    expect(() => ins.run('r3', 2)).toThrow(/UNIQUE constraint failed/);
+    db.close();
   });
 });
 

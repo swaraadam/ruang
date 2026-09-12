@@ -33,12 +33,17 @@ CREATE TABLE org_node (
   parent_id TEXT REFERENCES org_node(id), name TEXT NOT NULL, policy_overrides TEXT
 ) STRICT;
 
+-- 14.1 calls Role versioned, which needs a key grouping the versions of one logical role. id is
+-- the row; name is the role. UNIQUE (owner_id, name, version) is the shape context_pack uses.
+-- Without it, UNIQUE (id, version) was vacuous: id is already the primary key, so no two rows
+-- could ever share one.
 CREATE TABLE role (
   id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner(id),
   org_node_id TEXT NOT NULL REFERENCES org_node(id),
-  version INTEGER NOT NULL, charter TEXT NOT NULL, capabilities TEXT NOT NULL,
+  name TEXT NOT NULL, version INTEGER NOT NULL,
+  charter TEXT NOT NULL, capabilities TEXT NOT NULL,
   context_refs TEXT, output_contract TEXT, limits TEXT, delegation TEXT,
-  UNIQUE (id, version)
+  UNIQUE (owner_id, name, version)
 ) STRICT;
 
 CREATE TABLE member (
@@ -136,8 +141,11 @@ CREATE TABLE steer (
   id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES owner(id),
   org_node_id TEXT NOT NULL REFERENCES org_node(id),
   attempt_id TEXT NOT NULL REFERENCES attempt(id), intent TEXT NOT NULL,
+  -- 15.3: requested -> attempted -> acknowledged | failed | unresolved. Five states, not four.
+  -- attempted emits no durable event (Appendix A.1 has four steer events), so it exists only here.
+  -- Omitting it would make a real state unrepresentable in a schema that cannot be edited later.
   delivery_state TEXT NOT NULL
-    CHECK (delivery_state IN ('requested','acknowledged','failed','unresolved')),
+    CHECK (delivery_state IN ('requested','attempted','acknowledged','failed','unresolved')),
   attempts INTEGER NOT NULL DEFAULT 0, resolution TEXT
 ) STRICT;
 
