@@ -65,7 +65,11 @@ importers:
         specifier: ^7.6.11
         version: 7.6.13
 
-  packages/policy: {}
+  packages/policy:
+    dependencies:
+      '@internal/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/protocol: {}
 
