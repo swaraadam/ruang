@@ -129,6 +129,16 @@ describe('durable event vocabulary', () => {
     expect(isDurableEvent({ ...completed, org_node_id: undefined })).toBe(false);
   });
 
+  it("carries the scope column as project_id, not A.3's workspace_id (erratum, ADR-0004)", () => {
+    expect(isDurableEvent({ ...completed, project_id: 'project-1' })).toBe(true);
+    expect(isDurableEvent({ ...completed, project_id: 5 })).toBe(false); // it really is validated
+    // The old spelling is not merely unused, it is not assignable. If this stops erroring the
+    // rename has been undone somewhere. @ts-expect-error is itself an error when nothing errors.
+    // @ts-expect-error `workspace_id` is not a field of EventEnvelope (CLAUDE.md section 1).
+    const old: EventEnvelope<'task.completed'> = { ...completed, workspace_id: 'workspace-1' };
+    expect(old.project_id).toBeUndefined();
+  });
+
   it('fails closed on a payload that does not match its own type', () => {
     expect(isDurableEvent({ ...completed, payload: { task_id: 't', outcome: 'landed' } })).toBe(
       false,

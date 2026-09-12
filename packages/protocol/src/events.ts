@@ -41,7 +41,22 @@ const checkResult = shape({
   artifact_ref: nullable(str),
 });
 
-/** The closed catalog: one payload validator per durable type, in Appendix A.1 order. */
+/**
+ * The closed catalog: one payload validator per durable type, in Appendix A.1 order.
+ *
+ * **The payload field sets are provisional.** Appendix A.1 specifies 53 event *names* and no
+ * payload schemas. Every field set below is derived — from §14.1 (entities), §5.1 (basis), §12.3
+ * (action fingerprint), §15.3 (steer states) and §16.1 (evidence) — and derived is not specified.
+ * A green suite proves these shapes are self-consistent, never that they are right.
+ *
+ * They therefore remain revisable **without a major version bump** until P0-13 and the first real
+ * binary-asset workflow have exercised them against something other than this file's own tests.
+ * `PROTOCOL_VERSION` still pins the vocabulary (see VOCABULARY_FINGERPRINT); what is deferred is
+ * the promise that a field set is final, not the discipline of versioning a change to it.
+ *
+ * Derivation source per group and the three deliberate divergences from Appendix A:
+ * docs/adr/0004-protocol-event-vocabulary.md.
+ */
 const PAYLOADS = {
   'project.registered': shape({
     project_id: str,
@@ -271,7 +286,13 @@ const PAYLOADS = {
   }),
 };
 
-/** Who caused the event. `runtime_id` names the Seam D runtime, never a vendor (§4). */
+/**
+ * Who caused the event. `runtime_id` names the Seam D runtime, never a vendor (§4).
+ *
+ * Appendix A.3 calls this field `provider`. It predates the Seam D decision in §25.1, and naming a
+ * vendor in the envelope re-imports the substitution assumption that seam exists to prevent. Kept
+ * as a deliberate divergence — docs/adr/0004-protocol-event-vocabulary.md.
+ */
 export type Actor = {
   readonly member_id: string;
   readonly role_id: string | null;
@@ -286,6 +307,11 @@ export type PayloadOf<T extends DurableEventType> = PayloadFor<(typeof PAYLOADS)
  * Blueprint A.3. `owner_id` and `org_node_id` are non-optional from migration v1 (invariant 8,
  * §14.2): a single-owner deployment still routes through the same capability lookup, so every
  * event carries the columns that lookup needs.
+ *
+ * `project_id` is spelled `workspace_id` in Appendix A.3. That is an erratum, not a divergence in
+ * intent: §3 makes `Project` the core entity and CLAUDE.md §1 reserves "workspace" for UI copy, so
+ * A.3's field name contradicts the vocabulary the same blueprint mandates. Recorded in
+ * docs/adr/0004-protocol-event-vocabulary.md; the field is otherwise unchanged in meaning.
  */
 export type EventEnvelope<T extends DurableEventType = DurableEventType> = {
   readonly seq: number;
@@ -293,7 +319,7 @@ export type EventEnvelope<T extends DurableEventType = DurableEventType> = {
   readonly type: T;
   readonly owner_id: string;
   readonly org_node_id: string;
-  readonly workspace_id?: string;
+  readonly project_id?: string;
   readonly task_id?: string;
   readonly attempt_id?: string;
   readonly actor: Actor;
@@ -332,7 +358,7 @@ export const isDurableEvent = (value: unknown): value is DurableEvent => {
     str(value['ts']) &&
     str(value['owner_id']) &&
     str(value['org_node_id']) &&
-    optionalId(value['workspace_id']) &&
+    optionalId(value['project_id']) &&
     optionalId(value['task_id']) &&
     optionalId(value['attempt_id']) &&
     isActor(value['actor']) &&

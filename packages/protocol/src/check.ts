@@ -1,10 +1,11 @@
 /**
- * Structural validators for the wire boundary (CLAUDE.md §10: "zod or equivalent").
+ * Structural validators for the wire boundary.
  *
- * This is the equivalent. CLAUDE.md §8 forbids a new runtime dependency without an ADR and the
- * §5 stack list ships no schema library, so the gateway gets its boundary validation from these
- * primitives instead. `shape()` also records its field names, which is what lets the vocabulary
- * fingerprint (see events.ts) notice a payload change and not just a new event type.
+ * Hand-rolled on purpose. CLAUDE.md §8 forbids a new runtime dependency without an ADR line, and
+ * the §5 stack list ships no schema library, so the gateway gets its boundary validation from
+ * these primitives rather than from a new dependency. `shape()` also records its field names,
+ * which is what lets the vocabulary fingerprint (see events.ts) notice a payload change and not
+ * just a new event type — a general-purpose schema library would not give that for free.
  */
 
 /** A validator narrows `unknown`. `fields` is present only on object shapes. */
