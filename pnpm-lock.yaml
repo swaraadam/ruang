@@ -46,7 +46,11 @@ importers:
 
   packages/attention: {}
 
-  packages/domain: {}
+  packages/domain:
+    dependencies:
+      '@internal/protocol':
+        specifier: workspace:*
+        version: link:../protocol
 
   packages/persistence: {}
 

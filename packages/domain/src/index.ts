@@ -19,3 +19,5 @@ export type {
   SandboxInspection,
   Staleness,
 } from './vocabulary.js';
+export type { DomainAdapter } from './spi.js';
+export { SPI_METHODS } from './spi.js';
