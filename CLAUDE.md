@@ -173,8 +173,12 @@ Phase 1 ends in a **mandatory two-week stop-and-use period**. Do not open Phase 
 
 ## 10. Style
 
-- Small, reviewable change sets. Code change budget: 250 lines per task unless the issue says
-  otherwise. If a task exceeds it, split the issue instead of exceeding the budget.
+- Small, reviewable change sets. **Default change budget: 1250 lines per task.** It is a per-Project
+  guardrail on review burden (§16.6), not a universal constant: a Project sets its own, an issue may
+  set a tighter one, and a Role may tighten it further — **never loosen it** (§7.2). An issue's
+  `change_budget` overrides the default; absent means 1250.
+  Exceeding it still means splitting the issue, not shipping over. The number is a prompt to split
+  early, not a ceiling to argue with — the real guardrail is the reviewer.
 - Types before implementation. `packages/protocol` unions are closed and versioned; adding a shape
   bumps `PROTOCOL_VERSION` and requires a renderer case.
 - Tests are contract tests where a seam exists, unit tests otherwise. No mock that asserts an

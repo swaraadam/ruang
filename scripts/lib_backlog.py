@@ -26,6 +26,9 @@ def body(i):
     if i.get("blocked_gate"):
         lines += ["## Blocked by external gate", f"⛔ {i['blocked_gate']}", "",
                   "Do not start this issue until the owner closes the gate.", ""]
+    if i.get("change_budget"):
+        # A budget that renders nowhere is not a budget anyone works to.
+        lines += [f"## Change budget", f"{i['change_budget']} lines — {i.get('budget_reason','set on this issue')}", ""]
     if i.get("budget_waiver"):
         # Blueprint 16.2: only the owner may waive, and the waiver is durable evidence. A waiver
         # that renders nowhere is not evidence, so it belongs in the issue body, not just the file.
