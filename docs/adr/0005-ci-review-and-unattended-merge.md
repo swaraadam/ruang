@@ -33,7 +33,16 @@ reads `.claude/skills/review-pr/SKILL.md`, reviews against the CLAUDE.md §2 inv
 blueprint section the issue names, posts inline comments plus exactly one summary
 `pull_request_review`, and applies one of two exclusive labels: `review-passed` / `changes-requested`.
 
-`.github/workflows/claude.yml` handles `@claude` mentions for on-demand follow-up.
+`.github/workflows/claude.yml` handles `@claude` mentions for on-demand follow-up. It arrived
+separately via the `/install-github-app` installer (PR 50) and is used as-is — it scopes its `if`
+per event type and grants `actions: read` so Claude can read CI results, both of which the version
+drafted here lacked.
+
+PR 50 also added `.github/workflows/claude-code-review.yml`, which runs Anthropic's `code-review`
+plugin. It is kept alongside this one at the owner's instruction. The two do not conflict on state:
+that reviewer is given only `mcp__github_inline_comment__create_inline_comment`, so it cannot run
+`gh`, cannot apply a label and cannot emit a marker. It posts inline comments; this one owns the
+verdict the landing gate reads. The cost is a second review run per push.
 
 ### 2. `synchronize` is NOT gated on a label — a deliberate divergence from the source pattern
 
