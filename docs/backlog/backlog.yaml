@@ -884,3 +884,42 @@ issues:
       - "a normal review still passes unchanged -- the fix must not add a failure mode of its own"
       - "the three observed cases are re-checked against the fix and the results recorded"
       - "PR 60 is the worked example: changes-requested and pass on the identical SHA, 3h56m apart, the second after a re-run"
+
+  # ------------------------------------------------------- Development scaffolding
+  # Authored 2026-09-13 by the orchestrator under the owner's standing instruction:
+  # "If the slice needs something the backlog does not cover -- a dev script, seed data, a way to
+  # create a Project and a Task so the UI has something to show -- author the issue yourself, groom
+  # it with a budget, and build it." Seed data is development scaffolding. It is NOT a migration,
+  # and nothing in it may ever be depended on by production code.
+  - id: D-01
+    title: "Development seed data and a one-command dev run"
+    phase: 0
+    agent: spine-engineer
+    size: S
+    depends_on: [P0-05]
+    refs: "14.1, 14.2, 15.2"
+    change_budget: 400
+    budget_reason: "scaffolding, not mechanics: rows, events and two npm scripts"
+    goal: |
+      Two commands take a clean clone to durable state worth rendering, so the gateway and the web
+      shell have real snapshot and event history to read instead of a fixture. Every row the seed
+      writes is ordinary durable truth -- same tables, same append path, same replay guarantees --
+      so nothing downstream needs a "is this seeded?" branch.
+      Seed data is development scaffolding and is labelled as such at every layer. It is not a
+      migration: it does not live in migrations/, does not change the schema, and does not run as
+      part of migrate().
+    scope:
+      - "scripts/seed.ts, run as `pnpm seed`: one owner, one org node, one role, one member, one project, several tasks"
+      - "events appended through appendEvent so seeded history replays through readSince like any other"
+      - "seeded tasks span distinct attention-relevant states, including at least one whose basis is genuinely unknown"
+      - "writes to a dev database under state/, gitignored, never a production path"
+      - "refuses to run against a non-empty database unless --reset is passed"
+      - "console output states plainly that this is development seed data"
+      - "`pnpm dev` script; it starts the gateway once P0-09 lands, and says so honestly until then"
+    acceptance:
+      - "pnpm seed on a clean clone produces a database whose event log replays contiguously from seq 0"
+      - "at least one seeded task is in a state that must render as unknown, not as a guess (invariant 1)"
+      - "re-running pnpm seed without --reset refuses rather than duplicating or silently upserting"
+      - "every seeded row carries owner_id and org_node_id (invariant 8); identity audit passes"
+      - "the seed does not import from, write to, or register itself with packages/persistence/src/migrations"
+      - "pnpm verify passes with the seed script in the tree"
