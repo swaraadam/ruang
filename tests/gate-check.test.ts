@@ -123,8 +123,8 @@ const shimPath = (dir: string, body: string) => {
 };
 
 const RESTART_TEST = 'adapters/host/darwin/tests/session-restart.test.ts';
-const CONTRACT_TEST = 'packages/domain/src/basis.contract.test.ts';
-const BROKEN_CONTRACT_TEST = 'packages/domain/src/collect-fail.contract.test.ts';
+const CONTRACT_TEST = 'tests/contract/basis.contract.test.ts';
+const BROKEN_CONTRACT_TEST = 'tests/contract/collect-fail.contract.test.ts';
 const oneTest = (green: boolean) =>
   `import { expect, it } from 'vitest';\nit('proves it', () => { expect(1).toBe(${green ? 1 : 2}); });\n`;
 

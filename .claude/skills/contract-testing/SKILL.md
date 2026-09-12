@@ -17,6 +17,18 @@ typecheck → lint → unit → contract → scripts/audit-seams.sh → scripts/
 Must be fast enough to run per commit. Every issue's definition of done includes a green run
 pasted as evidence.
 
+## Where contract tests live
+
+`tests/contract/`, named `*.contract.test.ts`. Both halves are load-bearing:
+
+- The **directory** is what gate condition 0.4 selects. A contract test outside it is invisible
+  to the gate, so "no adapter-private contract test" stops being a rule someone has to remember
+  and becomes a structural fact.
+- The **name** is how a reader tells a contract test from a unit test once both sit in `tests/`.
+
+A suite is written once against the SPI and parameterized by adapter. If an adapter needs its own
+version of an assertion, the contract is wrong — revise it (ADR), do not fork the test.
+
 ## Domain adapter contract (blueprint §20.1)
 
 For each registered adapter, assert:
@@ -57,3 +69,6 @@ fail a test rather than silently corrupt office state. Sanitization is a script,
   the blueprint rule, quoting the section in the test name.
 - Relaxing an audit or deleting an assertion to get green. Escalate on the issue instead.
 - Snapshot tests over event streams without asserting `seq` monotonicity and replayability.
+- A global `retry` in `vitest.config.ts`. Condition 0.4 reads the runner's pass/fail counters, so
+  a test that fails then passes is reported as passed — the gate would print PASS over a flake.
+  Retries belong to a declared check, bounded and recorded, per item 6 above.
