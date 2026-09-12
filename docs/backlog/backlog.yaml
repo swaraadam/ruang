@@ -838,9 +838,11 @@ issues:
       - "establish whether the cause is the action's checkout, gh pr diff caching, or the prompt"
       - "make the reviewer state which SHA it read, in the summary, so a stale read is visible without archaeology"
       - "consider having the proof step compare the SHA the reviewer names against the head it is verifying"
+      - "a re-run that flips a verdict is indistinguishable from remediating this bug: decide whether the gate should record who triggered a re-run and why, or refuse a pass that only appeared after one"
     acceptance:
       - "the summary review names the SHA whose content was read"
       - "a review whose read SHA differs from the head SHA does not produce a pass marker (test or recorded run)"
       - "a normal review still passes unchanged -- the fix must not add a failure mode of its own"
       - "the three observed cases are re-checked against the fix and the results recorded"
+      - "PR 60 is the worked example: changes-requested and pass on the identical SHA, 3h56m apart, the second after a re-run"
 
