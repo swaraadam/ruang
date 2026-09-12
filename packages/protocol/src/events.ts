@@ -5,6 +5,7 @@
  * reconstruct any view from a snapshot (invariant 1). Anything that cannot meet that bar is an
  * ephemeral channel and lives in ./ephemeral.ts, which shares no type with this module.
  */
+import { CHANGE_ANCHOR_KINDS } from './anchor.js';
 import {
   type Check,
   bool,
@@ -30,8 +31,13 @@ const subject = {
   subject_id: str,
 };
 const basisInput = shape({ resource_id: str, version: str });
+/**
+ * The anchor vocabulary has one authoritative home (invariant 7): `anchor.ts`. This spelled the
+ * same four kinds out again, so a fifth kind added there would have left `review.thread.created`
+ * silently accepting a narrower set. `anchor.test.ts` pins the two together.
+ */
 const anchor = shape({
-  kind: oneOf('text_range', 'asset_id', 'node_path', 'region'),
+  kind: oneOf(...CHANGE_ANCHOR_KINDS),
   locator: str,
 });
 const checkResult = shape({
