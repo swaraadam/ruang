@@ -28,9 +28,8 @@ export type RenderableChange = {
 }[RenderableChangeKind];
 
 /**
- * A reviewable unit. `change_unit` is a core term (§3, §16.6): the unit is domain-specific, so the
- * core stores it rather than assuming lines.
- */
+ * A reviewable unit. `change_unit` is a core term (§3, §16.6): domain-specific, so the core stores
+ * it rather than assuming lines. */
 export type ChangeSet = {
   readonly change_set_id: string;
   readonly summary: string;
@@ -64,7 +63,7 @@ export const RENDERABLE_FINGERPRINT = RENDERABLE_CHANGE_KINDS.map(
   (k) => `change:${k}(${(RENDERABLE[k].fields ?? []).join(',')})`,
 ).join(';');
 
-/** Canonical JSON: keys sorted at every depth, array order preserved — order is content. */
+/** Canonical JSON: keys sorted at every depth; array order is preserved because order is content. */
 const canonical = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (isRecord(value)) {
