@@ -798,7 +798,7 @@ issues:
     agent: contract-test-engineer
     size: S
     depends_on: [P0-01]
-    blocked_gate: "the fix is written and staged in docs/proposals/guardrails.yml; the owner must copy it into .github/workflows/ -- agents are denied Edit there and that deny held"
+    blocked_gate: "owner must apply the workflow change -- agents are denied Edit on .github/workflows/** and that deny held. A prepared replacement is carried on the open PR that also updates CLAUDE.md section 8; it is not in this tree"
     refs: "21"
     goal: |
       .github/workflows/guardrails.yml reads github.event.pull_request.labels.*.name -- a snapshot taken
