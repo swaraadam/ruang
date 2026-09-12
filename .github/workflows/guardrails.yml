@@ -1,16 +1,7 @@
 name: guardrails
 
-# PROPOSED REPLACEMENT for .github/workflows/guardrails.yml.
-# Agents are denied Edit on .github/workflows/**, and that deny held when this was written, so
-# this file sits here instead of being applied directly. Apply with:
-#
-#     cp docs/proposals/guardrails.yml .github/workflows/guardrails.yml && rm docs/proposals/guardrails.yml
-#
-# Two changes: a label change re-evaluates the check, and a bot review can stand in for the owner
-# on the paths where that is safe.
-#
 # WHY `labeled`/`unlabeled` ARE IN THE TRIGGER LIST. They are not in the default `pull_request`
-# types, so the previous version only ever saw the labels a PR had when it was opened or last
+# types, so an earlier version only ever saw the labels a PR had when it was opened or last
 # pushed. Adding the label did nothing, and re-running replayed the original event payload --
 # measured on PR 33, where a re-run after the label change still expanded to
 # `echo "needs-owner" | grep -qw owner-approved`. Close-and-reopen was the only remedy.
@@ -25,6 +16,8 @@ on:
 jobs:
   guardrails:
     runs-on: ubuntu-latest
+    # The poll below can occupy 10 minutes. Cap the job so a wedged attempt cannot sit for hours.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +29,8 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           BASE: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_ACTION: ${{ github.event.action }}
         run: |
           CHANGED=$(git diff --name-only "origin/$BASE...HEAD")
 
@@ -66,49 +61,70 @@ jobs:
             exit 0
           fi
 
-          # Live, not from the event payload. See the header.
-          LABELS=$(gh pr view "$PR" --repo "$REPO" --json labels -q '[.labels[].name] | join(" ")')
-          echo "labels now: ${LABELS:-<none>}"
+          # One attempt at the verdict. Quiet by design: it runs up to 30 times, so the refusal
+          # text is printed once at the end rather than thirty times inside the loop.
+          #
+          # Everything it reads is re-read on every call. Labels come live from the API, not from
+          # the event payload (see the header), and the marker is looked up fresh.
+          verdict() {
+            LABELS=$(gh pr view "$PR" --repo "$REPO" --json labels -q '[.labels[].name] | join(" ")') || LABELS=""
 
-          has() { echo " $LABELS " | grep -q " $1 "; }
+            # owner-approved satisfies both tiers, so it is checked first and short-circuits.
+            case " $LABELS " in *" owner-approved "*) return 0 ;; esac
 
+            # No owner label, and an owner-only path changed. Nothing else can clear this.
+            if [ -n "$OWNER_ONLY" ]; then return 1; fi
+
+            # BOT_OK path: the SHA-BOUND MARKER, not the review-passed label. The reviewer applies
+            # that label on any clean verdict, and a label carries no commit identity -- it
+            # survives a push that changed the very code it judged. Gating a guardrail on it would
+            # re-open the staleness hole the marker exists to close. Filtered to claude[bot]
+            # because any account can write a comment containing the same line.
+            gh api "repos/$REPO/pulls/$PR/reviews" \
+                 -q '.[] | select(.user.login == "claude[bot]") | .body' \
+              | grep -Fxq "claude-review: pass @ $HEAD_SHA"
+          }
+
+          # RETRY. This check fires on `synchronize` the instant a push lands, while the reviewer
+          # that writes the marker has not started yet -- so the first look is almost always too
+          # early and the check went red for asking, not for anything being wrong. The only remedy
+          # was a manual re-run. Poll instead: 30 x 20s = 10 minutes, which covers a normal review
+          # plus queue time.
+          #
+          # This waits for a verdict; it does not lower the bar for one. HEAD_SHA is pinned to the
+          # event payload, so every attempt demands a marker for THIS commit. A later push gets its
+          # own run against its own SHA, and a verdict that never arrives still ends red.
+          ATTEMPTS=30
+
+          # ...except on a label event, where there is no race to wait for: a human just acted, and
+          # the reviewer is not about to change its mind. Polling here would mean REMOVING
+          # owner-approved leaves the check green for ten more minutes -- and turning red promptly
+          # on a removed label is the property the live-label read exists to provide.
+          case "$EVENT_ACTION" in labeled|unlabeled) ATTEMPTS=1 ;; esac
+
+          for i in $(seq 1 $ATTEMPTS); do
+            if verdict; then
+              echo "Verdict for $HEAD_SHA on attempt $i (labels: ${LABELS:-<none>})."
+              exit 0
+            fi
+            echo "attempt $i/$ATTEMPTS: no verdict yet for $HEAD_SHA (labels: ${LABELS:-<none>})"
+            [ "$i" -lt "$ATTEMPTS" ] && sleep 20
+          done
+
+          echo
           if [ -n "$OWNER_ONLY" ]; then
             echo "Owner-only guardrail paths changed:"
             echo "$OWNER_ONLY" | sed 's/^/  /'
-            has owner-approved || {
-              echo
-              echo "Refusing: these need the owner-approved label."
-              echo "CI and the permission file are not delegated to the reviewer -- and the bot"
-              echo "cannot review a workflow change at all, so review-passed is unreachable here."
-              exit 1
-            }
-            echo "owner-approved present."
+            echo "Refusing: these need the owner-approved label."
+            echo "CI and the permission file are not delegated to the reviewer -- and the bot"
+            echo "cannot review a workflow change at all, so review-passed is unreachable here."
           fi
-
           if [ -n "$BOT_OK" ]; then
             echo "Bot-reviewable guardrail paths changed:"
             echo "$BOT_OK" | sed 's/^/  /'
-
-            if has owner-approved; then
-              echo "owner-approved present."
-            else
-              # The SHA-BOUND MARKER, not the review-passed label. The reviewer applies that
-              # label on any clean verdict, and a label carries no commit identity -- it
-              # survives a push that changed the very code it judged. Gating a guardrail on it
-              # would re-open the staleness hole the marker exists to close. Filtered to
-              # claude[bot] because any account can write a comment containing the same line.
-              HEAD_SHA="${{ github.event.pull_request.head.sha }}"
-              if gh api "repos/$REPO/pulls/$PR/reviews" \
-                   -q '.[] | select(.user.login == "claude[bot]") | .body' \
-                   | grep -Fxq "claude-review: pass @ $HEAD_SHA"; then
-                echo "claude[bot] pass marker for $HEAD_SHA."
-              else
-                echo
-                echo "Refusing: no claude[bot] pass marker for $HEAD_SHA."
-                echo "A marker for an earlier commit does not count -- it judged different code."
-                echo "Fix and push: every push re-reviews, and a clean re-review emits a new one."
-                echo "(Or apply owner-approved to override.)"
-                exit 1
-              fi
-            fi
+            echo "Refusing: no claude[bot] pass marker for $HEAD_SHA."
+            echo "A marker for an earlier commit does not count -- it judged different code."
+            echo "Fix and push: every push re-reviews, and a clean re-review emits a new one."
+            echo "(Or apply owner-approved to override.)"
           fi
+          exit 1
