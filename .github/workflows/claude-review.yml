@@ -126,16 +126,17 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # claude-code-action refuses to run when a workflow file on the PR branch differs
-          # from the copy on the default branch -- its own protection against a PR editing the
-          # workflow to reach the secrets. It reports that skip as SUCCESS, which is how a
-          # no-op review reaches a green check. Such a PR is a guardrail change: owner-approved
-          # and owner-merged, never auto-merged, so it needs no marker. Say why, and fail --
-          # `claude-review` is not a required check, so a red one here blocks nothing.
-          if gh pr diff "$PR" --repo "$REPO" --name-only | grep -q '^\.github/workflows/'; then
-            echo "This PR changes .github/workflows/, so claude-code-action skips itself by"
-            echo "design and no review can run. That is expected. The PR is a guardrail change:"
-            echo "it needs the owner-approved label and an owner merge, not a review marker."
+          # A guardrail-path PR is owner-gated: the reviewer is told to withhold the marker for
+          # one, pass or fail, and claude-code-action additionally skips itself entirely when the
+          # PR edits a workflow file (its own protection against a PR reaching the secrets, which
+          # it reports as SUCCESS). Neither is a failed review, and saying "the review did not
+          # complete" for either would send someone hunting a fault that is not there.
+          if gh pr diff "$PR" --repo "$REPO" --name-only \
+               | grep -qE '^(CLAUDE\.md|\.claude/settings\.json|\.github/workflows/|scripts/audit-(seams|identity)\.sh)'; then
+            echo "OWNER-GATED: this PR touches a guardrail path, so no verdict marker is emitted"
+            echo "for it, by design -- pass or fail. The landing gate refuses to merge it either"
+            echo "way. It needs the owner-approved label and an owner merge."
+            echo "This is not a review failure. Read the review body for the findings."
             exit 1
           fi
 
@@ -147,12 +148,21 @@ jobs:
                      -q '.[] | select(.user.login == "claude[bot]") | .body' || true)
 
           if printf '%s\n' "$bodies" | grep -Fxq "claude-review: pass @ $HEAD_SHA"; then
-            echo "pass marker from claude[bot] for $HEAD_SHA"
-          elif printf '%s\n' "$bodies" | grep -Fxq "claude-review: changes-requested @ $HEAD_SHA"; then
-            echo "changes-requested marker from claude[bot] for $HEAD_SHA"
-          else
-            echo "No claude[bot] verdict for $HEAD_SHA."
-            echo "A verdict for an earlier commit does not count: it judged different code."
-            echo "The review did not complete. Refusing to report success."
+            echo "PASS: marker from claude[bot] for $HEAD_SHA"
+            exit 0
+          fi
+
+          # A blocking verdict must show RED. Reporting "a review ran" as green would put a full
+          # row of green checks on a PR the reviewer rejected, which is the one thing someone
+          # glancing at this list before merging must not see.
+          if printf '%s\n' "$bodies" | grep -Fxq "claude-review: changes-requested @ $HEAD_SHA"; then
+            echo "CHANGES REQUESTED: claude[bot] found blocking findings (B1/B2) in $HEAD_SHA."
+            echo "This check is red because the verdict is blocking, not because anything broke."
+            echo "Read the review body, fix, and push -- the next push re-reviews."
             exit 1
           fi
+
+          echo "NO VERDICT from claude[bot] for $HEAD_SHA."
+          echo "A verdict for an earlier commit does not count: it judged different code."
+          echo "The review did not complete. Refusing to report success."
+          exit 1
