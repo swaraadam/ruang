@@ -9,6 +9,14 @@ export {
   isDurableEventOf,
 } from './events.js';
 export type { ChangeAnchor, ChangeAnchorKind } from './anchor.js';
+export type { ChangeSet, RenderableChange, RenderableChangeKind } from './change.js';
+export {
+  RENDERABLE_CHANGE_KINDS,
+  RENDERABLE_FINGERPRINT,
+  changeSetHash,
+  isChangeSet,
+  isRenderableChange,
+} from './change.js';
 export { ANCHOR_FINGERPRINT, CHANGE_ANCHOR_KINDS, isAnchor, unionCheck } from './anchor.js';
 export type { Check, Infer } from './check.js';
 export { bool, int, isRecord, list, nullable, num, oneOf, shape, str } from './check.js';
