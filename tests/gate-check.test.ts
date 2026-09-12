@@ -70,21 +70,48 @@ const withVerify = (dir: string, verify: string) => {
   return dir;
 };
 
-/** PATH with every directory that provides `cmd` removed. */
-const pathWithout = (cmd: string) =>
-  (process.env.PATH ?? '')
-    .split(delimiter)
-    .filter((d) => d !== '' && !existsSync(join(d, cmd)))
-    .join(delimiter);
+/** The runners a gate condition shells out to. */
+const RUNNERS = ['pnpm', 'node'] as const;
 
-/** What `command -v` finds under a given PATH. The control for pathWithout: a strip that missed a
- *  copy leaves the runner reachable and the test then measures nothing. That happened while
- *  writing this file -- node lived in two PATH directories and removing one changed no verdict. */
+/** What gate-check.sh itself needs to run at all. The strip below removes whole directories, so it
+ *  can take one of these with the runner -- and then the gate is UNPROVEN for a reason that has
+ *  nothing to do with the runner under test. */
+const NEEDED = ['sh', 'git', 'grep', 'mktemp', 'find', 'date', 'tr', 'mkdir', 'rm'];
+
+/** What `command -v` finds under a given PATH ('' when nothing does). The control for the PATHs
+ *  built below: a strip that missed a copy leaves the runner reachable and the test then measures
+ *  nothing. That happened while writing this file -- node lived in two PATH directories and
+ *  removing one changed no verdict. */
 const resolves = (cmd: string, path: string) =>
-  spawnSync('sh', ['-c', `command -v ${cmd} || true`], {
-    env: { ...process.env, PATH: path },
-    encoding: 'utf8',
-  }).stdout.trim();
+  (
+    spawnSync('sh', ['-c', `command -v ${cmd} || true`], {
+      env: { ...process.env, PATH: path },
+      encoding: 'utf8',
+    }).stdout ?? ''
+  ).trim();
+
+/** A PATH under which exactly the named runners resolve, whatever the host's layout.
+ *
+ *  Subtracting runner-bearing directories from the ambient PATH cannot express that everywhere.
+ *  `corepack enable` installs pnpm into node's own bin directory, so on CI removing node removed
+ *  pnpm with it and this file's own control fired -- while passing locally, where the two live in
+ *  different directories. Which runner is absent is the subject of these tests, so it cannot be
+ *  left to where the host happens to keep them: a directory the test owns supplies the runners it
+ *  wants, and re-supplies anything else the strip took. */
+const pathWithRunners = (dir: string, present: readonly string[]) => {
+  const ambient = (process.env.PATH ?? '').split(delimiter).filter((d) => d !== '');
+  const from = ambient.join(delimiter);
+  const bin = mkdtempSync(join(dir, 'path-bin-'));
+  const supply = (cmd: string) => {
+    const target = resolves(cmd, from);
+    if (target !== '' && !existsSync(join(bin, cmd))) symlinkSync(target, join(bin, cmd));
+  };
+  for (const cmd of ['sh', ...present]) supply(cmd);
+  const kept = ambient.filter((d) => !RUNNERS.some((r) => existsSync(join(d, r))));
+  const path = [bin, ...kept].join(delimiter);
+  for (const cmd of NEEDED) if (resolves(cmd, path) === '') supply(cmd);
+  return path;
+};
 
 /** A stand-in `pnpm` first on PATH, so a runner's behaviour can be chosen rather than assumed. */
 const shimPath = (dir: string, body: string) => {
@@ -92,7 +119,7 @@ const shimPath = (dir: string, body: string) => {
   mkdirSync(bin, { recursive: true });
   writeFileSync(join(bin, 'pnpm'), body);
   chmodSync(join(bin, 'pnpm'), 0o755);
-  return `${bin}${delimiter}${pathWithout('pnpm')}`;
+  return `${bin}${delimiter}${pathWithRunners(dir, ['node'])}`;
 };
 
 const RESTART_TEST = 'adapters/host/darwin/tests/session-restart.test.ts';
@@ -383,11 +410,12 @@ describe('gate-check 0.2 tells a failing check from a runner that never ran', ()
     // the runner going missing rather than the fixture being unable to pass.
     expect(verdict(runGate(dir), '0.2')).toContain('PASS');
 
-    for (const missing of ['pnpm', 'node'] as const) {
+    for (const missing of RUNNERS) {
       const other = missing === 'pnpm' ? 'node' : 'pnpm';
-      const path = pathWithout(missing);
-      expect(resolves(missing, path), missing).toBe(''); // the strip worked ...
-      expect(resolves(other, path), other).not.toBe(''); // ... and took nothing else with it
+      const path = pathWithRunners(dir, [other]);
+      expect(resolves(missing, path), missing).toBe(''); // the runner really is gone ...
+      expect(resolves(other, path), other).not.toBe(''); // ... its counterpart really is not ...
+      for (const cmd of NEEDED) expect(resolves(cmd, path), cmd).not.toBe(''); // ... and the script can still run
 
       const out = runGateRaw(dir, { ...process.env, PATH: path }).out;
       // 0.3 and 0.4 shell out to the same runner and must answer the same way.
