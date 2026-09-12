@@ -102,10 +102,18 @@ jobs:
             Both are SHA-bound on purpose. A bare label cannot say WHICH commit it
             judged, so a stale `changes-requested` from an earlier push would otherwise
             read as a verdict on code that was never reviewed. Take the SHA from this prompt, never from
-            memory. Never emit it for a PR that touches a guardrail path
-            (CLAUDE.md, .claude/settings.json, .github/workflows/**,
-            scripts/audit-seams.sh, scripts/audit-identity.sh) -- those are the
-            owner's to approve, and the gate refuses them regardless.
+            memory.
+
+            Withhold the marker ONLY for the owner-only paths: .github/workflows/**,
+            .claude/settings.json and scripts/audit-*.sh. CI, the permission file and the
+            scripts that enforce invariants 8/9/10 are the owner's to approve, and no
+            review substitutes for that.
+
+            CLAUDE.md DOES get a marker. It is instructions to agents, not a check that
+            runs: changing it weakens no audit and breaks no build. guardrails.yml gates
+            it on the marker, and it must be the SHA-bound marker and not the
+            review-passed label, because a label carries no commit identity and survives
+            a push that changed the code it judged.
 
             A PREVIOUS REVIEW ON THIS PR IS NOT A REASON TO STAY SILENT. Later runs
             exist precisely because the code changed after that review, so review the
@@ -132,10 +140,11 @@ jobs:
           # it reports as SUCCESS). Neither is a failed review, and saying "the review did not
           # complete" for either would send someone hunting a fault that is not there.
           if gh pr diff "$PR" --repo "$REPO" --name-only \
-               | grep -qE '^(CLAUDE\.md|\.claude/settings\.json|\.github/workflows/|scripts/audit-(seams|identity)\.sh)'; then
-            echo "OWNER-GATED: this PR touches a guardrail path, so no verdict marker is emitted"
-            echo "for it, by design -- pass or fail. The landing gate refuses to merge it either"
-            echo "way. It needs the owner-approved label and an owner merge."
+               | grep -qE '^(\.claude/settings\.json|\.github/workflows/|scripts/audit-(seams|identity)\.sh)'; then
+            echo "OWNER-ONLY: this PR touches CI, the permission file or an audit script, so no verdict"
+            echo "marker is emitted for it, by design -- pass or fail. It needs the"
+            echo "owner-approved label and an owner merge. A workflow change additionally"
+            echo "cannot be reviewed at all: claude-code-action skips itself on one."
             echo "This is not a review failure. Read the review body for the findings."
             exit 1
           fi

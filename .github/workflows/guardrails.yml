@@ -1,6 +1,26 @@
 name: guardrails
 
-on: [pull_request]
+# PROPOSED REPLACEMENT for .github/workflows/guardrails.yml.
+# Agents are denied Edit on .github/workflows/**, and that deny held when this was written, so
+# this file sits here instead of being applied directly. Apply with:
+#
+#     cp docs/proposals/guardrails.yml .github/workflows/guardrails.yml && rm docs/proposals/guardrails.yml
+#
+# Two changes: a label change re-evaluates the check, and a bot review can stand in for the owner
+# on the paths where that is safe.
+#
+# WHY `labeled`/`unlabeled` ARE IN THE TRIGGER LIST. They are not in the default `pull_request`
+# types, so the previous version only ever saw the labels a PR had when it was opened or last
+# pushed. Adding the label did nothing, and re-running replayed the original event payload --
+# measured on PR 33, where a re-run after the label change still expanded to
+# `echo "needs-owner" | grep -qw owner-approved`. Close-and-reopen was the only remedy.
+#
+# The labels are also read live from the API below rather than from the event payload, so a re-run
+# sees current state and -- the case that actually matters -- REMOVING a label turns the check red
+# again instead of leaving a stale green behind.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
 
 jobs:
   guardrails:
@@ -10,15 +30,85 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Protected files require owner-approved label
+      - name: Guardrail changes need a verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.base_ref }}
         run: |
-          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
-          PROTECTED=$(echo "$CHANGED" | grep -E '^(\.claude/settings\.json|\.github/workflows/|scripts/audit-(seams|identity)\.sh|CLAUDE\.md)' || true)
+          CHANGED=$(git diff --name-only "origin/$BASE...HEAD")
 
-          if [ -n "$PROTECTED" ]; then
-            echo "Guardrail files changed:"
-            echo "$PROTECTED"
+          # Two tiers, and the split is not arbitrary.
+          #
+          # OWNER-ONLY: CI, the agent permission file, and the audit scripts. An agent must never be
+          # able to weaken the build, widen its own capability, or loosen the checks that enforce
+          # invariants 8/9/10, and then merge that unattended -- however good the review was.
+          # The audit scripts are in this tier because claude[bot] blocked an earlier version of
+          # this file for putting them in the other one, and it was right: they ARE the enforcement
+          # mechanism, so delegating them is a weakened guardrail by any plain reading.
+          # `.github/workflows/**` is additionally impossible for the bot to review at all --
+          # claude-code-action refuses to run when a PR edits a workflow file, its own protection
+          # against a PR rewriting the workflow to reach the secrets. A marker there is unreachable,
+          # not merely unwise.
+          OWNER_ONLY=$(echo "$CHANGED" | grep -E '^(\.github/workflows/|\.claude/settings\.json|scripts/audit-(seams|identity)\.sh)' || true)
 
-            echo "${{ join(github.event.pull_request.labels.*.name, ' ') }}" | grep -qw owner-approved \
-              || { echo "Missing owner-approved label — refusing."; exit 1; }
+          # BOT-REVIEWABLE: CLAUDE.md alone. It is instructions to agents, not a check that runs --
+          # changing it weakens no audit and breaks no build, and a bad change is visible in the
+          # diff. This is where nearly all the label friction came from, so it is where loosening
+          # actually pays. Gated on the SHA-bound marker below, never on the review-passed label:
+          # the reviewer applies that label on any clean verdict, and a label carries no commit
+          # identity, so it survives a push that changed the very code it judged.
+          BOT_OK=$(echo "$CHANGED" | grep -E '^CLAUDE\.md' || true)
+
+          if [ -z "$OWNER_ONLY" ] && [ -z "$BOT_OK" ]; then
+            echo "No guardrail path touched. Nothing for this check to gate."
+            exit 0
+          fi
+
+          # Live, not from the event payload. See the header.
+          LABELS=$(gh pr view "$PR" --repo "$REPO" --json labels -q '[.labels[].name] | join(" ")')
+          echo "labels now: ${LABELS:-<none>}"
+
+          has() { echo " $LABELS " | grep -q " $1 "; }
+
+          if [ -n "$OWNER_ONLY" ]; then
+            echo "Owner-only guardrail paths changed:"
+            echo "$OWNER_ONLY" | sed 's/^/  /'
+            has owner-approved || {
+              echo
+              echo "Refusing: these need the owner-approved label."
+              echo "CI and the permission file are not delegated to the reviewer -- and the bot"
+              echo "cannot review a workflow change at all, so review-passed is unreachable here."
+              exit 1
+            }
+            echo "owner-approved present."
+          fi
+
+          if [ -n "$BOT_OK" ]; then
+            echo "Bot-reviewable guardrail paths changed:"
+            echo "$BOT_OK" | sed 's/^/  /'
+
+            if has owner-approved; then
+              echo "owner-approved present."
+            else
+              # The SHA-BOUND MARKER, not the review-passed label. The reviewer applies that
+              # label on any clean verdict, and a label carries no commit identity -- it
+              # survives a push that changed the very code it judged. Gating a guardrail on it
+              # would re-open the staleness hole the marker exists to close. Filtered to
+              # claude[bot] because any account can write a comment containing the same line.
+              HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+              if gh api "repos/$REPO/pulls/$PR/reviews" \
+                   -q '.[] | select(.user.login == "claude[bot]") | .body' \
+                   | grep -Fxq "claude-review: pass @ $HEAD_SHA"; then
+                echo "claude[bot] pass marker for $HEAD_SHA."
+              else
+                echo
+                echo "Refusing: no claude[bot] pass marker for $HEAD_SHA."
+                echo "A marker for an earlier commit does not count -- it judged different code."
+                echo "Fix and push: every push re-reviews, and a clean re-review emits a new one."
+                echo "(Or apply owner-approved to override.)"
+                exit 1
+              fi
+            fi
           fi
