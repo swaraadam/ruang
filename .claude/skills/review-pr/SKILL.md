@@ -73,8 +73,9 @@ trusting the summary.
 ### B2 — blocking: the contract is not met
 
 - An acceptance checkbox you cannot tie to a specific file and line.
-- Change set over the 250-line budget (CLAUDE.md §10) with no owner waiver recorded **on the
-  issue**. "The author said it was fine" is not a waiver; look for a `budget_waiver`.
+- Change set over the budget — the issue's `change_budget`, else the 1250 default (CLAUDE.md §10) —
+  with no owner waiver recorded **on the issue**. Count authored lines; a generated lockfile is not
+  review burden. "The author said it was fine" is not a waiver; look for a `budget_waiver`.
 - A `packages/protocol` union changed without a `PROTOCOL_VERSION` consideration, or a new shape
   with no renderer case.
 - A seam crossed: substrate assumptions leaking into core, or a core workaround added because an
