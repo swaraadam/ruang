@@ -1,1 +1,21 @@
-export {};
+export type {
+  ApplyOperation,
+  ApplyPlan,
+  ApplyPolicy,
+  ApplyResult,
+  Basis,
+  BrokerOutcome,
+  CheckResult,
+  CheckSpec,
+  ClosePolicy,
+  ProjectId,
+  ReconcileResult,
+  RenderSurface,
+  ResourceId,
+  ReversalPlan,
+  ReversibilityClass,
+  SafetyRecord,
+  Sandbox,
+  SandboxInspection,
+  Staleness,
+} from './vocabulary.js';
