@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/src/index.d.ts",
       "default": "./dist/src/index.js"
+    },
+    "./ephemeral": {
+      "types": "./dist/src/ephemeral.d.ts",
+      "default": "./dist/src/ephemeral.js"
     }
   }
 }
