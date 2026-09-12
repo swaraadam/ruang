@@ -372,6 +372,7 @@ issues:
       - "any UNPROVEN condition is listed with the issue that would close it"
 
   # ------------------------------------------------------------------ Phase 1
+
   - id: P1-01
     title: "Canonical origin: routing design, throwaway-hostname proof runbook"
     phase: 1
@@ -844,3 +845,30 @@ issues:
       - "each guarded path is probed through Edit, Write, cp, mv and python3, and the results recorded"
       - "no audit or check is weakened to make the probe pass"
 
+  - id: M-13
+    title: "The CI reviewer can judge an older commit than the one it comments on"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    refs: "16.1, 16.2"
+    goal: |
+      claude-review posts its verdict against the head SHA, but the content it read can be an earlier
+      commit. Seen three times on 2026-09-12 -- PR 49, PR 55 and PR 60. On PR 60 every finding attached to
+      head edf4e75 quoted line counts from four commits earlier and linked blob/0ae1b34; the PR was at
+      exactly the 250-line budget and the duplication the finding named had already been removed.
+      Both directions are harmful. A stale read can block a clean PR, which is what happened, and it can
+      equally pass a PR whose defect was introduced in the commit it did not read -- and the SHA-bound
+      marker does not protect against that. The marker binds the verdict to a commit; it does not bind
+      the READING to that commit.
+    scope:
+      - "establish whether the cause is the action's checkout, gh pr diff caching, or the prompt"
+      - "make the reviewer state which SHA it read, in the summary, so a stale read is visible without archaeology"
+      - "consider having the proof step compare the SHA the reviewer names against the head it is verifying"
+      - "a re-run that flips a verdict is indistinguishable from remediating this bug: decide whether the gate should record who triggered a re-run and why, or refuse a pass that only appeared after one"
+    acceptance:
+      - "the summary review names the SHA whose content was read"
+      - "a review whose read SHA differs from the head SHA does not produce a pass marker (test or recorded run)"
+      - "a normal review still passes unchanged -- the fix must not add a failure mode of its own"
+      - "the three observed cases are re-checked against the fix and the results recorded"
+      - "PR 60 is the worked example: changes-requested and pass on the identical SHA, 3h56m apart, the second after a re-run"
