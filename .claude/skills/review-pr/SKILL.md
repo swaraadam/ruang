@@ -175,10 +175,15 @@ only for the current head SHA.
   gate matches the whole line with `grep -Fx`, so an abbreviated or annotated SHA simply fails.
 - The SHA binding **is** the staleness rule: a push changes the head SHA, the marker stops
   matching, and the approval expires without anyone having to remember to revoke it.
-- **Never emit it for a PR touching a guardrail path** — `CLAUDE.md`, `.claude/settings.json`,
-  `.github/workflows/**`, `scripts/audit-seams.sh`, `scripts/audit-identity.sh`. Those are the
-  owner's to approve and the gate refuses them regardless. Say in the summary that the PR is
-  owner-gated and why.
+- **Withhold the marker only for the owner-only paths** — `.github/workflows/**` and
+  `.claude/settings.json`. CI and the agent permission file are the owner's to approve and no
+  review substitutes for that; a workflow change additionally cannot be reviewed at all, because
+  `claude-code-action` skips itself on one. Say in the summary that the PR is owner-gated and why.
+- **`CLAUDE.md` and `scripts/audit-*.sh` do get a marker.** `guardrails.yml` gates them on it —
+  on the marker, never on the `review-passed` label, because a label carries no commit identity
+  and would survive a push that changed the code it judged. Those two paths are exactly where a
+  weakened guardrail would hide, so apply the B1 "weakened guardrail" test with full force before
+  emitting a pass for one.
 
 ## Rules
 
