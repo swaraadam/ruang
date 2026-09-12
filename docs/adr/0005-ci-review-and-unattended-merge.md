@@ -74,6 +74,25 @@ is stale and it cannot tell which.
 
 ### 4. Unattended merge is bounded
 
+> **AMENDED 2026-09-12 — `CLAUDE.md` moved out of this list.** The rule below was written when the
+> only gate on a guardrail path was the `owner-approved` label. It is superseded in one respect:
+> `CLAUDE.md` is now delegated to the landing gate on a `claude-review: pass` marker bound to the
+> head SHA, and the CI reviewer emits a marker for it rather than withholding one.
+>
+> **Why the reversal.** `CLAUDE.md` is instructions to agents, not a check that runs — changing it
+> weakens no audit and breaks no build, and a bad change is visible in the diff. Requiring the owner
+> for it blocked unattended operation, which is this ADR's own stated goal, for a path where the
+> reviewer is a genuinely independent identity and the marker cannot go stale.
+>
+> **What did not change.** `.github/workflows/**`, `.claude/settings.json` and `scripts/audit-*.sh`
+> stay owner-only. An earlier attempt delegated the audit scripts too and `claude[bot]` blocked it
+> three times as a weakened guardrail; it was right — those scripts *are* the enforcement of
+> invariants 8, 9 and 10, so handing them to the agents they constrain has no floor under it.
+>
+> The list below is left as written rather than edited in place, so the reversal is visible instead
+> of being absorbed.
+
+
 The gate may merge while the owner is away, but never:
 
 - a PR touching a guardrail path (`CLAUDE.md`, `.claude/settings.json`, `.github/workflows/**`,
