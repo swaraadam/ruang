@@ -120,13 +120,20 @@ Mirror the Director capability table from the blueprint — it applies to you, i
   check — not by convention.
 - **Merging is allowed only through the landing gate.** `pr-landing-agent` is the sole agent that
   may merge, and only when every condition in `.claude/agents/pr-landing-agent.md` holds: CI
-  `verify` green on the exact head SHA, a `fresh-reviewer` `approve` marker carrying that same head
-  SHA (**not** a GitHub `APPROVED` review — that state is unreachable while agents review under the
-  PR author's own account), `security-reviewer` approved for apply/approval/credential/auth/budget
-  changes, change set within budget or under a recorded owner waiver, every acceptance box tied to
-  actual code, and no denied file touched. Otherwise it requests changes. No other agent merges
-  anything. The gate is discipline, not enforcement — one account holds every role, and ADR-0003
-  says so plainly rather than implying a boundary that is not there.
+  `verify` and `guardrails` green on the exact head SHA, a `claude-review: pass` marker carrying
+  that same head SHA from the CI reviewer (`.github/workflows/claude-review.yml`, which runs as the
+  Claude GitHub App — a **different identity** from the PR author, which is what makes it evidence),
+  `security-reviewer` approved for apply/approval/credential/auth/budget changes, change set within
+  budget or under a recorded owner waiver, every acceptance box tied to actual code, and no
+  guardrail file touched. Otherwise it requests changes. No other agent merges anything.
+- **Unattended merge is allowed, guardrail changes are not.** The gate may merge while the owner is
+  away, but never a PR touching `CLAUDE.md`, `.claude/settings.json`, `.github/workflows/**` or
+  `scripts/audit-*.sh`, and never one labelled `needs-owner`, `blocked-gate` or
+  `changes-requested`. It stops the run entirely when one defect shape appears three times across
+  different issues. A local `fresh-reviewer` marker is an author-side pre-check, never sufficient
+  alone — it runs as the same account that wrote the PR. The merge step remains discipline, not
+  enforcement: ADR-0003 and ADR-0005 say so plainly rather than implying a boundary that is not
+  there.
 - **Never edit the guardrails to get green.** `scripts/audit-seams.sh`,
   `scripts/audit-identity.sh`, `.claude/settings.json` and `.github/workflows/**` are denied to
   agents. Weakening an audit, a CI workflow or the permission file is not a shortcut to a passing
