@@ -1,0 +1,45 @@
+{
+  "_example": "EXAMPLE DATA, not a deployment. Seam C role templates (blueprint 7.2). Two roles are the minimum that can demonstrate 7.3: one that may task another, and one that may be tasked. Capability ids come from the closed set in packages/policy/src/vocabulary.ts; the blueprint's read_workspace / apply_patch_in_sandbox are spelled in core vocabulary here.",
+  "policy_schema_version": 1,
+  "roles": [
+    {
+      "id": "director-v1",
+      "owner_id": "owner-example",
+      "org_node_id": "studio",
+      "name": "director",
+      "version": 1,
+      "charter": "Plan, decompose, dispatch and steer. Owns no irreversible consequence: section 8.2 keeps apply, approval, repair, locks, secrets and budget outside this set.",
+      "capabilities": [
+        "read_project",
+        "read_change_set",
+        "propose_task",
+        "dispatch_task",
+        "steer_attempt",
+        "cancel_attempt",
+        "open_sandbox",
+        "close_sandbox",
+        "apply_change_set_in_sandbox",
+        "run_declared_command",
+        "run_declared_check",
+        "request_review",
+        "acquire_exclusive_lock",
+        "delegate_to_role"
+      ],
+      "output_contract": null,
+      "limits": { "cost_per_task_cents": 2000, "concurrency": 3 },
+      "delegation": ["build-engineer-v1"]
+    },
+    {
+      "id": "build-engineer-v1",
+      "owner_id": "owner-example",
+      "org_node_id": "studio/engineering",
+      "name": "build-engineer",
+      "version": 1,
+      "charter": "Implement inside a sandbox against a declared basis. Tightens the project's change budget; never widens it.",
+      "capabilities": ["read_project", "apply_change_set_in_sandbox", "run_declared_command"],
+      "output_contract": { "change_budget": 120, "evidence_profile": "strong" },
+      "limits": { "cost_per_task_cents": 800, "concurrency": 1 },
+      "delegation": []
+    }
+  ]
+}
