@@ -54,6 +54,9 @@ importers:
 
   packages/persistence:
     dependencies:
+      '@internal/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       better-sqlite3:
         specifier: ^12.2.0
         version: 12.11.1
