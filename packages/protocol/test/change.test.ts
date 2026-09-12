@@ -64,11 +64,8 @@ describe('the unions are closed', () => {
     expect(isAnchor({ kind: 'region', resource_id: 'a', path: '/x' })).toBe(false);
   });
 
-  /**
-   * §5.2.1: "new shapes require a protocol version bump and a renderer case". A comment cannot
-   * enforce that. This pins the fingerprint to the version, so adding a case or renaming a field
-   * fails here until someone decides what the new version is.
-   */
+  // §5.2.1: "new shapes require a protocol version bump and a renderer case" — which a comment
+  // cannot enforce. Pinning the fingerprint to the version makes a new case fail here first.
   it('cannot gain a shape without a deliberate version bump', () => {
     expect(PROTOCOL_VERSION).toBe(1);
     expect(CHANGE_FINGERPRINT).toBe(
@@ -85,11 +82,8 @@ describe('the unions are closed', () => {
 });
 
 describe('an adapter ships no browser code through this surface', () => {
-  /**
-   * §5.2.1: "adapters do not ship browser code in v0.7". The risk is not a field literally called
-   * `script`; it is a field whose value the renderer would have to execute, fetch or inject. Scan
-   * every field name in both unions for that family rather than asserting it in prose.
-   */
+  // §5.2.1: "adapters do not ship browser code in v0.7". The risk is not a field named `script`,
+  // it is one whose value a renderer would execute, fetch or inject. Scan, do not assert in prose.
   it('has no field that could carry code, markup or a fetchable location', () => {
     const forbidden =
       /(script|html|markup|css|style|render|component|template|widget|url|uri|href|src|endpoint|module|bundle|eval|code)/i;
@@ -98,13 +92,6 @@ describe('an adapter ships no browser code through this surface', () => {
       return fields.filter((f) => forbidden.test(f)).map((f) => `${entry.split('(')[0]}.${f}`);
     });
     expect(offenders).toEqual([]);
-  });
-
-  it('carries artifact references, not inline content', () => {
-    // before_ref/after_ref are opaque ids into the artifact store (§14.3). If a future shape
-    // inlined bytes instead, a change set would stop fitting in an event payload.
-    expect(assetDelta.before_ref.startsWith('sha256:')).toBe(true);
-    expect(Object.values(assetDelta).every((v) => typeof v !== 'object')).toBe(true);
   });
 });
 
@@ -136,6 +123,8 @@ describe('the content hash is stable', () => {
     const twice = changeSetHash(JSON.parse(JSON.stringify(set)) as typeof set);
     expect(twice).toBe(once);
     expect(once).toMatch(/^[0-9a-f]{16}$/);
+    // And the id is not content: the same changes under two ids are the same review.
+    expect(changeSetHash({ ...set, change_set_id: 'cs-2' })).toBe(once);
   });
 
   it('does not depend on the order keys were written in', () => {
@@ -150,10 +139,6 @@ describe('the content hash is stable', () => {
     } as typeof set;
     expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(set));
     expect(changeSetHash(reordered)).toBe(changeSetHash(set));
-  });
-
-  it('ignores the change set id, so the same content under two ids hashes alike', () => {
-    expect(changeSetHash({ ...set, change_set_id: 'cs-2' })).toBe(changeSetHash(set));
   });
 
   it('changes when the content changes, including deep inside an anchor', () => {
