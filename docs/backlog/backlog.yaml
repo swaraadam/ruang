@@ -884,3 +884,31 @@ issues:
       - "a normal review still passes unchanged -- the fix must not add a failure mode of its own"
       - "the three observed cases are re-checked against the fix and the results recorded"
       - "PR 60 is the worked example: changes-requested and pass on the identical SHA, 3h56m apart, the second after a re-run"
+
+  - id: M-14
+    title: "guardrails checks for a review marker before the review has run"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    blocked_gate: "owner must apply the workflow change -- .github/workflows/** is owner-only and agents are denied Edit on it"
+    refs: "16.2"
+    goal: |
+      guardrails.yml gates a CLAUDE.md change on a claude[bot] pass marker for the head SHA, but it runs
+      on push and finishes in about five seconds, while the reviewer that posts the marker takes three
+      to five minutes. So the first guardrails run on any CLAUDE.md PR always fails, with a message that
+      reads like a refusal rather than a race. Measured on PR 67: guardrails failed at 5s with "no
+      claude[bot] pass marker", the review posted its pass at 4m03s, and a re-run then passed unchanged.
+      Nothing is unsafe -- it fails closed, and the marker it eventually reads is the right one for the
+      right commit. It is purely a sequencing defect, and the cost is a confusing red check plus a manual
+      re-run on every delegated-path PR, which is exactly the friction the delegation was meant to remove.
+    scope:
+      - "re-evaluate when a review is submitted: add pull_request_review types [submitted] to the trigger"
+      - "keep the existing triggers -- a label change and a push must still re-evaluate"
+      - "the message when a marker is genuinely absent must stay distinguishable from the race"
+    acceptance:
+      - "a CLAUDE.md PR reaches green guardrails with no manual re-run (recorded run)"
+      - "a CLAUDE.md PR whose review returns changes-requested still fails guardrails"
+      - "a PR touching an owner-only path still demands owner-approved, unchanged"
+      - "a PR touching no guardrail path still passes immediately, unchanged"
+
