@@ -1,0 +1,97 @@
+name: guardrails
+
+# PROPOSED REPLACEMENT for .github/workflows/guardrails.yml.
+# Agents are denied Edit on .github/workflows/**, and that deny held when this was written, so
+# this file sits here instead of being applied directly. Apply with:
+#
+#     cp docs/proposals/guardrails.yml .github/workflows/guardrails.yml && rm docs/proposals/guardrails.yml
+#
+# Two changes: a label change re-evaluates the check, and a bot review can stand in for the owner
+# on the paths where that is safe.
+#
+# WHY `labeled`/`unlabeled` ARE IN THE TRIGGER LIST. They are not in the default `pull_request`
+# types, so the previous version only ever saw the labels a PR had when it was opened or last
+# pushed. Adding the label did nothing, and re-running replayed the original event payload --
+# measured on PR 33, where a re-run after the label change still expanded to
+# `echo "needs-owner" | grep -qw owner-approved`. Close-and-reopen was the only remedy.
+#
+# The labels are also read live from the API below rather than from the event payload, so a re-run
+# sees current state and -- the case that actually matters -- REMOVING a label turns the check red
+# again instead of leaving a stale green behind.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled, ready_for_review]
+
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guardrail changes need a verdict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          CHANGED=$(git diff --name-only "origin/$BASE...HEAD")
+
+          # Two tiers, and the split is not arbitrary.
+          #
+          # OWNER-ONLY: CI and the agent permission file. An agent must never be able to weaken the
+          # build, or widen its own capability, and then merge that unattended -- however good the
+          # review was. `.github/workflows/**` is additionally impossible for the bot to review at
+          # all: claude-code-action refuses to run when a PR edits a workflow file, its own
+          # protection against a PR rewriting the workflow to reach the secrets. So `review-passed`
+          # is not merely unwise there, it is unreachable.
+          OWNER_ONLY=$(echo "$CHANGED" | grep -E '^(\.github/workflows/|\.claude/settings\.json)' || true)
+
+          # BOT-REVIEWABLE: project instructions and the audit scripts. The CI reviewer runs as the
+          # Claude GitHub App -- a different identity from the PR author -- and its B1 list names
+          # "a weakened guardrail: a deleted assertion, a loosened audit pattern, a narrowed scan
+          # set" explicitly. That is a real independent check, so `review-passed` stands on its own
+          # here. This is what keeps a CLAUDE.md or audit-script change from needing the owner awake.
+          BOT_OK=$(echo "$CHANGED" | grep -E '^(CLAUDE\.md|scripts/audit-(seams|identity)\.sh)' || true)
+
+          if [ -z "$OWNER_ONLY" ] && [ -z "$BOT_OK" ]; then
+            echo "No guardrail path touched. Nothing for this check to gate."
+            exit 0
+          fi
+
+          # Live, not from the event payload. See the header.
+          LABELS=$(gh pr view "$PR" --repo "$REPO" --json labels -q '[.labels[].name] | join(" ")')
+          echo "labels now: ${LABELS:-<none>}"
+
+          has() { echo " $LABELS " | grep -q " $1 "; }
+
+          if [ -n "$OWNER_ONLY" ]; then
+            echo "Owner-only guardrail paths changed:"
+            echo "$OWNER_ONLY" | sed 's/^/  /'
+            has owner-approved || {
+              echo
+              echo "Refusing: these need the owner-approved label."
+              echo "CI and the permission file are not delegated to the reviewer -- and the bot"
+              echo "cannot review a workflow change at all, so review-passed is unreachable here."
+              exit 1
+            }
+            echo "owner-approved present."
+          fi
+
+          if [ -n "$BOT_OK" ]; then
+            echo "Bot-reviewable guardrail paths changed:"
+            echo "$BOT_OK" | sed 's/^/  /'
+            if has review-passed; then
+              echo "review-passed present -- claude[bot] reviewed this and found no B1/B2."
+            elif has owner-approved; then
+              echo "owner-approved present."
+            else
+              echo
+              echo "Refusing: needs review-passed (from claude[bot]) or owner-approved."
+              echo "If the reviewer asked for changes, fix and push -- every push re-reviews,"
+              echo "and a clean re-review flips the label."
+              exit 1
+            fi
+          fi
