@@ -767,22 +767,30 @@ issues:
     blocked_gate: "owner must change .claude/settings.json -- it is a guardrail path and the agent is denied Edit on it by design"
     refs: "21, 8.1"
     goal: |
-      The Edit(...) denies in .claude/settings.json are anchored at the repo root, but CLAUDE.md section 7
-      requires every agent to work in a git worktree under .sandboxes/. A write to
-      .sandboxes/<ID>/.github/workflows/x.yml is not matched by Edit(./.github/workflows/**) and succeeds.
-      Measured 2026-09-12 while implementing ADR-0005, with the deny present and other denies (gh secret,
-      gh auth) enforced in the same session. Every guardrail Edit deny has this hole, so the protection
-      that actually binds today is the guardrails CI check, not the harness.
+      CORRECTED 2026-09-12 after a second measurement contradicted the first. The original filing said the
+      denies never match a sandbox path. That is wrong. The real rule, measured in one session with the deny
+      list unchanged throughout:
+        - overwriting an EXISTING guarded file in a sandbox worktree is REFUSED (the protection holds);
+        - creating a NEW file in a guarded directory in a sandbox worktree SUCCEEDS.
+      Writing .sandboxes/<ID>/.github/workflows/claude-review.yml (new) succeeded; writing
+      .sandboxes/<ID>/.github/workflows/guardrails.yml (existing) was refused; a probe file
+      __deny-probe.yml (new) succeeded and was deleted.
+      A new file is the more dangerous half: a brand-new workflow runs arbitrary code with the repository's
+      secrets, and adding one never touches a file the deny knows about. Note also that a relative path in a
+      Bash command resolves against the repo root, not the sandbox -- `rm .github/workflows/x` from inside a
+      worktree was blocked as if it were the main tree.
     scope:
       - "deny patterns must match the guarded path inside a sandbox worktree as well as at the repo root"
       - "cover every current Edit deny: .github/workflows/**, .claude/settings.json, scripts/audit-*.sh, docs/blueprint/**"
       - "decide whether a PreToolUse hook is the right mechanism rather than more glob patterns"
       - "do not rely on the guardrails CI check alone -- an agent can apply the owner-approved label it reads"
     acceptance:
-      - "a write to .sandboxes/<ID>/.github/workflows/x.yml is refused (test, or a recorded manual probe)"
-      - "the same write at the repo root is still refused"
-      - "a write to an ordinary file inside a sandbox still succeeds -- the fix must not block normal work (test)"
-      - "each of the four guarded paths above is probed at both root and sandbox depth, and the result recorded"
+      - "creating a NEW file under .sandboxes/<ID>/.github/workflows/ is refused (recorded probe)"
+      - "overwriting an existing guarded file in a sandbox stays refused -- do not regress what already works"
+      - "the same two probes at the repo root are both refused"
+      - "a write to an ordinary file inside a sandbox still succeeds -- the fix must not block normal work"
+      - "each guarded path is probed new-file and existing-file, at root and sandbox depth, and the 16 results recorded"
+      - "a relative path in Bash from inside a worktree cannot reach a guarded path in the main tree"
 
   - id: M-11
     title: "guardrails check reads labels from a stale event payload"
@@ -790,7 +798,7 @@ issues:
     agent: contract-test-engineer
     size: S
     depends_on: [P0-01]
-    blocked_gate: "owner must apply the workflow change, or grant an agent Edit on .github/workflows/** (it is a guardrail path requiring the owner-approved label)"
+    blocked_gate: "owner must apply the workflow change -- agents are denied Edit on .github/workflows/** and that deny held. A prepared replacement is carried on the open PR that also updates CLAUDE.md section 8; it is not in this tree"
     refs: "21"
     goal: |
       .github/workflows/guardrails.yml reads github.event.pull_request.labels.*.name -- a snapshot taken
