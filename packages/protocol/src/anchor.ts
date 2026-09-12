@@ -12,7 +12,7 @@
  * needs to point somewhere stable, while a `ChangeAnchor` carries the per-kind coordinates a
  * renderer needs. Same vocabulary, different depth.
  */
-import { type Check, int, isRecord, shape, str } from './check.js';
+import { type Check, type Of, int, isRecord, shape, str } from './check.js';
 
 const ANCHORS = {
   text_range: shape({ resource_id: str, start_line: int, end_line: int }),
@@ -23,11 +23,9 @@ const ANCHORS = {
 
 export type ChangeAnchorKind = keyof typeof ANCHORS;
 
-type Payload<C> = C extends Check<infer P> ? P : never;
-
 /** The closed anchor union: discriminated on `kind`, one locator shape per case. */
 export type ChangeAnchor = {
-  [K in ChangeAnchorKind]: { readonly kind: K } & Payload<(typeof ANCHORS)[K]>;
+  [K in ChangeAnchorKind]: { readonly kind: K } & Of<(typeof ANCHORS)[K]>;
 }[ChangeAnchorKind];
 
 export const CHANGE_ANCHOR_KINDS = Object.keys(ANCHORS) as readonly ChangeAnchorKind[];

@@ -13,7 +13,8 @@ export type Check<T> = ((value: unknown) => value is T) & { readonly fields?: re
 
 type AnyCheck = (value: unknown) => boolean;
 type Fields = Readonly<Record<string, AnyCheck>>;
-type Of<C> = C extends Check<infer T> ? T : never;
+/** The value a `Check` narrows to. Exported so the unions do not each restate it. */
+export type Of<C> = C extends Check<infer T> ? T : never;
 export type Infer<F extends Fields> = { readonly [K in keyof F]: Of<F[K]> };
 
 export const isRecord = (v: unknown): v is Readonly<Record<string, unknown>> =>

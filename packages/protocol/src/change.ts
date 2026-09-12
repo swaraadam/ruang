@@ -1,22 +1,18 @@
 /**
  * What changed, in a shape the core can render — blueprint §5.2.1.
  *
- * Part 2 of P0-03. `anchor.ts` (part 1) owns where a change sits; this owns what it is and the set
- * that carries it. The core renders these without learning how an adapter produced them, and an
- * adapter never ships code to render one: "adapters do not ship browser code in v0.7". The type
- * surface is data only, which `change.test.ts` asserts by scanning every field name rather than by
- * trusting this comment.
+ * Part 2 of P0-03. `anchor.ts` owns where a change sits; this owns what it is and the set carrying
+ * it. The core renders these without learning how an adapter produced them, and an adapter ships no
+ * code to render one — "adapters do not ship browser code in v0.7". The type surface is data only,
+ * which `change.test.ts` asserts by scanning every field name rather than trusting this comment.
  */
 import { isAnchor, unionCheck } from './anchor.js';
-import { type Check, int, isRecord, list, oneOf, shape, str } from './check.js';
+import { type Check, type Of, int, isRecord, list, oneOf, shape, str } from './check.js';
 
 /**
- * §5.2.1 fixes the v1 set at four.
- *
- * Every variant carries its anchors rather than coordinates of its own, so a reviewer's comment
- * and the change it refers to are the same vocabulary. `before_ref`/`after_ref` are artifact
- * references (§14.3), never inline content: a renderable change must stay small enough to live in
- * an event payload, and the artifact store already owns retention.
+ * §5.2.1 fixes the v1 set at four. Every variant carries anchors rather than coordinates of its
+ * own, so a comment and the change it refers to share one vocabulary. `before_ref`/`after_ref` are
+ * artifact references (§14.3), never inline content: a change must fit in an event payload.
  */
 const RENDERABLE = {
   text_patch: shape({ resource_id: str, anchors: list(isAnchor), added: int, removed: int }),
@@ -27,19 +23,14 @@ const RENDERABLE = {
 
 export type RenderableChangeKind = keyof typeof RENDERABLE;
 
-type Payload<C> = C extends Check<infer P> ? P : never;
-
 /** The closed change union: discriminated on `kind`, one payload per case. */
 export type RenderableChange = {
-  [K in RenderableChangeKind]: { readonly kind: K } & Payload<(typeof RENDERABLE)[K]>;
+  [K in RenderableChangeKind]: { readonly kind: K } & Of<(typeof RENDERABLE)[K]>;
 }[RenderableChangeKind];
 
 /**
- * A reviewable unit: what it is, what it touched, and a hash that is stable across serializations.
- *
- * `change_unit` and `change_budget` are the core terms (CLAUDE.md §3, §16.6) — the budget is a
- * review-burden guardrail and the unit is domain-specific, so the core stores both rather than
- * assuming lines.
+ * A reviewable unit. `change_unit` is a core term (§3, §16.6): the unit is domain-specific, so the
+ * core stores it rather than assuming lines.
  */
 export type ChangeSet = {
   readonly change_set_id: string;
@@ -77,11 +68,7 @@ export const RENDERABLE_FINGERPRINT = RENDERABLE_CHANGE_KINDS.map(
   (k) => `change:${k}(${(RENDERABLE[k].fields ?? []).join(',')})`,
 ).join(';');
 
-/**
- * Canonical JSON: object keys sorted at every depth, array order preserved.
- *
- * Array order is content: reordering a change's anchors is a different set, not a reserialization.
- */
+/** Canonical JSON: keys sorted at every depth, array order preserved — order is content. */
 const canonical = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (isRecord(value)) {
@@ -95,12 +82,9 @@ const canonical = (value: unknown): string => {
 };
 
 /**
- * A hash over the *content* of a change set, excluding `content_hash` itself and `change_set_id`.
- *
- * Excluding the id is what makes it a content hash: the same changes captured twice are the same
- * content under two identities, and a reviewer who has read one has read the other. Stability
- * across serializations comes from `canonical`, not from JSON.stringify's key order, which follows
- * insertion.
+ * A hash over the *content*, excluding `content_hash` and `change_set_id`. Excluding the id is what
+ * makes it a content hash: the same changes captured twice are one review under two identities.
+ * Stability comes from `canonical`, not from JSON.stringify, whose key order follows insertion.
  *
  * **Not cryptographic.** 64 bits, two FNV-style rounds: `packages/protocol` is imported by the
  * browser bundle, so `node:crypto` is unavailable and §8 forbids a new dependency without an ADR

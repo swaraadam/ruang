@@ -43,14 +43,11 @@ describe('the renderable union is closed', () => {
     ]);
   });
 
-  it('refuses a kind outside the union, and a known kind with another’s payload', () => {
-    // The discriminant alone is not enough: each case validates its own fields.
+  it('refuses an unknown kind, a mismatched payload, and a bad anchor', () => {
+    // The discriminant alone is not enough: each case validates its own fields, and the anchor
+    // vocabulary is part 1's — this is the seam where a bad one would otherwise leak in.
     expect(isRenderableChange({ ...assetDelta, kind: 'binary_patch' })).toBe(false);
     expect(isRenderableChange({ ...assetDelta, kind: 'text_patch' })).toBe(false);
-  });
-
-  it('refuses a change whose anchors are not anchors', () => {
-    // The anchor vocabulary is part 1's; this is where a bad one would leak in.
     expect(
       isRenderableChange({ ...nodeTreeDelta, anchors: [{ kind: 'byte_offset', path: '/x' }] }),
     ).toBe(false);
@@ -115,13 +112,7 @@ describe('the content hash is stable', () => {
   it('does not depend on the order keys were written in', () => {
     // JSON.stringify follows insertion order, so a value rebuilt field-by-field in a different
     // order serializes differently. The hash must not.
-    const reordered = {
-      changes: [...set.changes],
-      change_size: set.change_size,
-      summary: set.summary,
-      change_set_id: set.change_set_id,
-      change_unit: set.change_unit,
-    } as typeof set;
+    const reordered = Object.fromEntries(Object.entries(set).reverse()) as typeof set;
     expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(set));
     expect(changeSetHash(reordered)).toBe(changeSetHash(set));
   });
