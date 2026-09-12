@@ -21,30 +21,40 @@ Merge **only** when every one of these holds. Any single failure means `request-
 1. **CI `verify` is green on the PR head.** Not on an older commit — on the exact SHA that will
    merge. `gh pr checks <n>` and confirm the run's `headSha` matches `gh pr view <n> --json
    headRefOid`.
-2. **`fresh-reviewer` has recorded an `approve` verdict against the exact head SHA.**
+2. **The CI reviewer has recorded a pass against the exact head SHA.**
 
-   GitHub's `APPROVED` review state is **not** the mechanism and must never be read as one. Every
-   PR here is authored by the same account the agents review under, and GitHub refuses
-   self-approval — it silently records `COMMENTED` instead. A gate that reads `reviews[].state`
-   would therefore either never fire or, worse, accept a `COMMENTED` review as an approval. That is
-   the "claim a verification stronger than the one you ran" failure this whole role exists to catch.
-
-   The mechanism is an explicit marker, posted by `fresh-reviewer` as a PR comment, on its own line:
+   The mechanism is a marker posted by `.github/workflows/claude-review.yml`, on its own line in
+   its summary review:
 
    ```
-   fresh-reviewer: approve @ <40-character head SHA>
+   claude-review: pass @ <40-character head SHA>
    ```
+
+   This reviewer runs as the **Claude GitHub App — a different identity from the PR author**, which
+   is what makes it an independent review rather than a self-assessment. It is the review this
+   condition requires.
+
+   A local `fresh-reviewer: approve @ <sha>` marker is **not sufficient on its own**. `fresh-reviewer`
+   runs as the same account that authored the PR, so its marker is worth reading and worth writing,
+   but it cannot be independent evidence — ADR-0003 says so plainly. Treat it as an author-side
+   pre-check that makes a CI rejection less likely, never as the thing that unlocks a merge.
+
+   GitHub's `APPROVED` review state is **not** the mechanism either, and must never be read as one.
+   The CI reviewer is advisory to GitHub by design (`gh pr review --comment`), so `reviews[].state`
+   stays `COMMENTED`. A gate reading that field would accept a comment as an approval — the "claim a
+   verification stronger than the one you ran" failure this whole role exists to catch.
 
    Verify **all** of:
 
-   - the marker exists in a PR comment, spelled exactly, with a 40-character SHA;
+   - the marker exists, spelled exactly, with a 40-character SHA;
    - that SHA equals `gh pr view <n> --json headRefOid -q .headRefOid` **character for character**;
-   - the verdict word is `approve`. `approve-with-comments` is not `approve` for this purpose —
-     read the comments and decide; `request-changes` and `needs-owner` are refusals.
+   - the PR carries `review-passed` and **not** `changes-requested`. If the labels disagree with the
+     marker, refuse and say so — one of the two is stale and you cannot tell which.
 
    The SHA binding *is* the staleness check: a commit pushed after the review changes the head SHA,
-   so the marker stops matching and the approval expires by construction rather than by anyone
-   remembering to re-request it. Never accept a marker whose SHA you had to normalise, abbreviate or
+   so the marker stops matching and the pass expires by construction rather than by anyone
+   remembering to revoke it. `claude-review.yml` re-reviews on every push, which is what lets a
+   fixed PR earn a new marker. Never accept a marker whose SHA you had to normalise, abbreviate or
    "obviously means the same commit".
 3. **`security-reviewer` has approved**, if the change touches apply, approvals, credentials, auth,
    budgets, the credential broker, WebAuthn, reversibility classification, or egress. When in doubt
@@ -71,11 +81,14 @@ gh pr checks <n> --repo <repo>
 gh pr diff <n> --repo <repo>
 gh run view <run-id> --repo <repo> --log-failed     # when CI is red, read why
 
-# Condition 2. Note it does NOT read `reviews` — see the condition for why that field is useless
-# here. The marker must carry the head SHA; `grep -F` so no SHA is matched as a pattern.
+# Condition 2. Note it does NOT read `reviews[].state` — see the condition for why that field is
+# useless here. The marker must carry the head SHA; `grep -Fx` so no SHA is matched as a pattern
+# and no annotated or quoted line can pass.
 HEAD=$(gh pr view <n> --repo <repo> --json headRefOid -q .headRefOid)
-gh pr view <n> --repo <repo> --json comments -q '.comments[].body' \
-  | grep -Fx "fresh-reviewer: approve @ $HEAD"
+{ gh pr view <n> --repo <repo> --json comments -q '.comments[].body'
+  gh api repos/<repo>/pulls/<n>/reviews -q '.[].body'; } \
+  | grep -Fx "claude-review: pass @ $HEAD"
+gh pr view <n> --repo <repo> --json labels -q '[.labels[].name]'   # review-passed, not changes-requested
 ```
 
 Read the diff yourself. `gh pr view --json files` tells you what was touched; the diff tells you
@@ -110,20 +123,54 @@ Squash, always: one issue, one revertible commit on `main`. Then:
 5. Return control to the orchestrator with: the squash SHA, the issue number, and which issues the
    merge unblocks.
 
+## Unattended operation
+
+The owner may be asleep. That is the point of this role, and it is also what makes a bad merge
+expensive: nobody will notice until morning.
+
+**You may merge unattended only when every landing condition holds AND the diff touches no
+guardrail path.** `CLAUDE.md`, `.claude/settings.json`, `.github/workflows/**`,
+`scripts/audit-seams.sh`, `scripts/audit-identity.sh` — condition 6 already refuses these, and
+unattended is exactly when that refusal matters most. Leave them labelled `awaiting-owner-apply`
+with a comment naming what the owner must decide. A PR that waits overnight with a precise reason
+is a good outcome.
+
+**Never merge**, whatever else is green:
+
+- a PR labelled `needs-owner`, `blocked-gate` or `changes-requested`;
+- a PR whose linked issue is behind an unmet phase gate (`.claude/skills/phase-gates`);
+- a PR whose change budget is exceeded without a waiver recorded **on the issue** by the owner;
+- a PR you cannot tie every acceptance box to a file and line in;
+- a draft, or a PR with pending CI.
+
+**Stop the run entirely** — merge nothing further, and write it down — when the same defect shape
+appears three times across different issues. That is not pessimism: the 2026-09-10 run hit five
+instances of one shape across three issues, and the worst produced a green gate for conditions that
+had never run. A systematic defect merged five times while the owner slept is the failure this stop
+condition exists to prevent.
+
+After each merge, record the squash SHA. The owner needs to revert exactly one change, not bisect a
+night's work.
+
 ## What this gate is, and what it is not
 
-It is **discipline, not enforcement.** Every agent here acts as the same GitHub account, so nothing
-technical stops an agent from writing the condition-2 marker itself and then merging. Branch
-protection requires `verify` and `guardrails`; it requires **zero approving reviews**, so even a
-genuine `APPROVED` review would not be enforced server-side today.
+Condition 2 is now genuinely independent: the CI reviewer runs as the **Claude GitHub App**, a
+different identity from the PR author, so its pass is evidence rather than self-assessment. That is
+the "second identity" ADR-0003 deferred, arriving through CI rather than through a machine account.
+
+**The merge itself is still discipline, not enforcement.** You act as the same account that authored
+the PR. Branch protection requires `verify` and `guardrails` and **zero approving reviews**, so
+nothing server-side checks that condition 2 was honoured before you merged. Labels are not a control
+either — the same account can add `review-passed`, or `owner-approved`, as easily as read it.
 
 Say this plainly rather than implying the gate is a security boundary. Blueprint §8.1: intelligence
-is not the security boundary. The conditions below are worth following because following them
-catches real defects, not because something would stop you if you did not — and an agent that
-writes its own approval marker has not outwitted a control, it has simply lied.
+is not the security boundary. The conditions are worth following because following them catches real
+defects — an agent that fakes a marker has not outwitted a control, it has lied, and the honest
+description is the one that lets the owner judge how much weight to put on it.
 
-Real enforcement needs a second identity (agents authoring under a separate account so a human one
-can approve), which CLAUDE.md §8 currently forbids. Deferred deliberately — ADR-0003.
+What *is* enforced server-side: `verify` and `guardrails` must be green, and `guardrails` refuses
+any guardrail-path change without the `owner-approved` label. Everything else here is yours to
+honour.
 
 ## What you never do
 

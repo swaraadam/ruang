@@ -1,0 +1,96 @@
+name: Claude PR review
+
+# Reviews every non-draft PR and re-reviews on every push to it.
+#
+# WHY `synchronize` IS NOT GATED ON A LABEL, unlike the repo this pattern came from.
+# There, a push only re-reviews while `changes-requested` is present, which is safe
+# because a human does the merging and sees the new commits. Here the merge can be
+# unattended, so a clean review followed by a push would otherwise leave a stale
+# `review-passed` on code nobody read. The verdict marker below is bound to the head
+# SHA, so a push invalidates it by construction and a fresh review must produce a new
+# one. Reviewing every push is what makes that binding honest rather than decorative.
+#
+# The 250-line change budget (CLAUDE.md section 10) keeps the per-push cost bounded.
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize]
+
+# One review per PR at a time; a rapid push supersedes the in-flight run.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Drafts are caught later on ready_for_review. Bot-authored PRs are not reviewed.
+    if: >-
+      ${{ !github.event.pull_request.draft
+          && github.event.pull_request.user.type != 'Bot' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write # claude-code-action mints its GitHub App token via OIDC
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1 # the diff comes via gh, not history
+
+      - name: Configure Claude Code workspace trust
+        run: |
+          python3 -c "
+          import json, os
+          p = os.path.expanduser('~/.claude.json')
+          try:
+              c = json.load(open(p))
+          except (FileNotFoundError, json.JSONDecodeError):
+              c = {}
+          c.setdefault('projects', {}).setdefault(os.environ['GITHUB_WORKSPACE'], {})['hasTrustDialogAccepted'] = True
+          json.dump(c, open(p, 'w'), indent=2)
+          "
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            HEAD SHA: ${{ github.event.pull_request.head.sha }}
+
+            Review this pull request non-interactively: do NOT ask questions or wait
+            for input. Produce the review and submit it.
+
+            Follow .claude/skills/review-pr/SKILL.md exactly. In short: read the
+            invariants in CLAUDE.md section 2 and the blueprint section the issue
+            names, review every changed file against B1/B2/A3/A4, leave a per-line
+            inline comment for each specific finding, then post exactly ONE summary
+            formal review FOR THIS RUN with
+              gh pr review ${{ github.event.pull_request.number }} --comment --body "..."
+            (a pull_request_review, NOT gh pr comment), then apply the verdict label
+            and, only on a pass, the SHA-bound marker.
+
+            The two labels are EXCLUSIVE: adding one must remove the other, so
+            `gh pr edit N --add-label review-passed --remove-label changes-requested`
+            and the reverse. A label left behind after a fix leaves the PR reading as
+            rejected for a finding that no longer exists.
+
+            THE MARKER IS LOAD-BEARING. The landing gate merges on it, unattended.
+            Emit it ONLY when there is no B1 and no B2 finding, as the last line of
+            the summary review, exactly:
+              claude-review: pass @ ${{ github.event.pull_request.head.sha }}
+            Nothing else on that line. Take the SHA from this prompt, never from
+            memory. Never emit it for a PR that touches a guardrail path
+            (CLAUDE.md, .claude/settings.json, .github/workflows/**,
+            scripts/audit-seams.sh, scripts/audit-identity.sh) -- those are the
+            owner's to approve, and the gate refuses them regardless.
+
+            A PREVIOUS REVIEW ON THIS PR IS NOT A REASON TO STAY SILENT. Later runs
+            exist precisely because the code changed after that review, so review the
+            diff as it now stands and post for this run. Only duplicate summaries
+            WITHIN one run are forbidden.
+
+            Advisory only: never --request-changes or --approve.
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh api:*)"

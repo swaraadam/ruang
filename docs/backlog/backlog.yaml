@@ -757,3 +757,56 @@ issues:
       - "guardrails.yml protects .claude/agents/** and docs/adr/** as well as the current four patterns"
       - "docs state which mechanism is the real boundary and which is advisory"
       - "no guardrail file is weakened by this issue: any change to them carries the owner-approved label"
+
+  - id: M-10
+    title: "Guardrail denies do not match sandbox worktree paths"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    blocked_gate: "owner must change .claude/settings.json -- it is a guardrail path and the agent is denied Edit on it by design"
+    refs: "21, 8.1"
+    goal: |
+      The Edit(...) denies in .claude/settings.json are anchored at the repo root, but CLAUDE.md section 7
+      requires every agent to work in a git worktree under .sandboxes/. A write to
+      .sandboxes/<ID>/.github/workflows/x.yml is not matched by Edit(./.github/workflows/**) and succeeds.
+      Measured 2026-09-12 while implementing ADR-0005, with the deny present and other denies (gh secret,
+      gh auth) enforced in the same session. Every guardrail Edit deny has this hole, so the protection
+      that actually binds today is the guardrails CI check, not the harness.
+    scope:
+      - "deny patterns must match the guarded path inside a sandbox worktree as well as at the repo root"
+      - "cover every current Edit deny: .github/workflows/**, .claude/settings.json, scripts/audit-*.sh, docs/blueprint/**"
+      - "decide whether a PreToolUse hook is the right mechanism rather than more glob patterns"
+      - "do not rely on the guardrails CI check alone -- an agent can apply the owner-approved label it reads"
+    acceptance:
+      - "a write to .sandboxes/<ID>/.github/workflows/x.yml is refused (test, or a recorded manual probe)"
+      - "the same write at the repo root is still refused"
+      - "a write to an ordinary file inside a sandbox still succeeds -- the fix must not block normal work (test)"
+      - "each of the four guarded paths above is probed at both root and sandbox depth, and the result recorded"
+
+  - id: M-11
+    title: "guardrails check reads labels from a stale event payload"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    blocked_gate: "owner must apply the workflow change, or grant an agent Edit on .github/workflows/** (it is a guardrail path requiring the owner-approved label)"
+    refs: "21"
+    goal: |
+      .github/workflows/guardrails.yml reads github.event.pull_request.labels.*.name -- a snapshot taken
+      when the event fired -- and triggers on pull_request without the labeled type. So adding owner-approved
+      never re-evaluates the check, and a re-run replays the original payload: measured on PR 33, where the
+      re-run still expanded to `echo "needs-owner" | grep -qw owner-approved` after the label was changed.
+      Close-and-reopen was the only remedy. The same snapshot behaviour means removing the label later fires
+      no event, so a previously green guardrails result stands -- the check records that approval was once
+      given, not that it is given at merge time.
+    scope:
+      - "re-evaluate on label change: add labeled and unlabeled to the trigger types, or query the label live via gh"
+      - "prefer a live lookup: it fixes the revocation case as well as the addition case"
+      - "state in the workflow comment why a re-run cannot fix a stale payload"
+    acceptance:
+      - "adding owner-approved to an open PR turns the check green without a push, a reopen or a re-run"
+      - "removing owner-approved from an open PR turns the check red again"
+      - "a PR touching no guardrail path still passes without any label"
+      - "the check still fails a guardrail-path PR that has no label"
+
