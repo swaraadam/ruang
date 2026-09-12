@@ -128,6 +128,43 @@ This composes correctly rather than awkwardly: a PR touching `.github/workflows/
 change, so it is owner-approved and owner-merged and was never eligible for a marker. `claude-review`
 is not a required check, so failing it blocks nothing the owner wants to do.
 
+## The reviewer found a hole in its own gate on its first real run
+
+Worth recording, because it is the strongest evidence this flow is worth having and the clearest
+warning about what it was nearly used for.
+
+`claude[bot]`'s first genuine review (PR 49, 2026-09-12) found that **condition 2 never checked who
+posted the marker.** The recipe gathered every PR comment body and every review body with no filter
+on `.user.login`. The entire premise of this ADR is that the marker is evidence *because a different
+identity posts it* — and any account with comment access, including the PR author's own, could have
+written a passing marker that satisfied the gate and authorised an unattended merge. Indistinguishable
+from the real thing.
+
+Three more, all real:
+
+- the `changes-requested` fallback in the proof step was bound to a **label**, not a SHA, so a stale
+  label from push 1 satisfied the check for push 2. Now a SHA-bound `changes-requested` marker;
+- `gh issue view` was missing from `--allowedTools`, so the skill's "review against the issue, not
+  the PR description" instruction would have failed silently in CI every time;
+- a comment claimed `grep -Fx` meant "no annotated or quoted line can pass". It does not — a marker
+  inside a fenced code block is still its own line and still matches. That claim was wrong, and the
+  correction is the one that matters: whole-line matching is not a defence against a hostile body,
+  it is only safe *because* the source is now restricted to `claude[bot]`.
+
+The verdict marker was not emitted on that run. The gate refused, correctly, for the right reason.
+
+## Owner directives, recorded
+
+CLAUDE.md §8 denies `.github/workflows/**` to agents and says the correct response is to stop and
+escalate. The owner directed this work explicitly and chose to grant workflow authoring rather than
+have it parked, and directed that both this PR and PR 50 be merged. The reviewer flagged the §8
+conflict correctly; it is an override, not an oversight, and it belongs in writing rather than in a
+chat log.
+
+**Still outstanding:** this change set is ~670 lines against the 250-line budget (§10) with **no
+waiver recorded on an issue**. §16.2 requires an explicit owner waiver with a reason; the owner's
+instruction to build it is not automatically one. Flagged rather than assumed.
+
 ## Known gaps — stated, not implied away
 
 1. **The merge step is still the author's own account.** Nothing server-side checks that condition 2

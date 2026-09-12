@@ -91,10 +91,17 @@ jobs:
             rejected for a finding that no longer exists.
 
             THE MARKER IS LOAD-BEARING. The landing gate merges on it, unattended.
-            Emit it ONLY when there is no B1 and no B2 finding, as the last line of
-            the summary review, exactly:
-              claude-review: pass @ ${{ github.event.pull_request.head.sha }}
-            Nothing else on that line. Take the SHA from this prompt, never from
+            Every run MUST end its summary review with exactly one marker line, as the
+            last line, nothing else on that line:
+
+              no B1 and no B2 finding:
+                claude-review: pass @ ${{ github.event.pull_request.head.sha }}
+              any B1 or B2 finding:
+                claude-review: changes-requested @ ${{ github.event.pull_request.head.sha }}
+
+            Both are SHA-bound on purpose. A bare label cannot say WHICH commit it
+            judged, so a stale `changes-requested` from an earlier push would otherwise
+            read as a verdict on code that was never reviewed. Take the SHA from this prompt, never from
             memory. Never emit it for a PR that touches a guardrail path
             (CLAUDE.md, .claude/settings.json, .github/workflows/**,
             scripts/audit-seams.sh, scripts/audit-identity.sh) -- those are the
@@ -107,7 +114,7 @@ jobs:
 
             Advisory only: never --request-changes or --approve.
           claude_args: |
-            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh api:*)"
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh issue view:*),Bash(gh api:*)"
 
       # Green must mean "a review happened", not "the action exited 0". The landing gate
       # reads the marker rather than this check, so a silent no-op would fail closed there
@@ -132,16 +139,20 @@ jobs:
             exit 1
           fi
 
-          bodies=$( { gh pr view "$PR" --repo "$REPO" --json comments -q '.comments[].body'
-                      gh api "repos/$REPO/pulls/$PR/reviews" -q '.[].body'; } || true )
-          labels=$(gh pr view "$PR" --repo "$REPO" --json labels -q '[.labels[].name] | join(",")')
+          # Only reviews posted BY THE APP count. An unfiltered read would accept a marker
+          # written by any account with comment access -- including the PR author's own,
+          # the identity this mechanism exists to exclude. PR comments are not a source at
+          # all for the same reason; only the reviews API, filtered on the poster.
+          bodies=$(gh api "repos/$REPO/pulls/$PR/reviews" \
+                     -q '.[] | select(.user.login == "claude[bot]") | .body' || true)
 
           if printf '%s\n' "$bodies" | grep -Fxq "claude-review: pass @ $HEAD_SHA"; then
-            echo "pass marker present for $HEAD_SHA"
-          elif printf '%s' "$labels" | grep -qw changes-requested; then
-            echo "review found blocking issues; changes-requested is set"
+            echo "pass marker from claude[bot] for $HEAD_SHA"
+          elif printf '%s\n' "$bodies" | grep -Fxq "claude-review: changes-requested @ $HEAD_SHA"; then
+            echo "changes-requested marker from claude[bot] for $HEAD_SHA"
           else
-            echo "No verdict for $HEAD_SHA: no pass marker, no changes-requested label."
+            echo "No claude[bot] verdict for $HEAD_SHA."
+            echo "A verdict for an earlier commit does not count: it judged different code."
             echo "The review did not complete. Refusing to report success."
             exit 1
           fi

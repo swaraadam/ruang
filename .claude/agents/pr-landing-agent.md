@@ -46,7 +46,11 @@ Merge **only** when every one of these holds. Any single failure means `request-
 
    Verify **all** of:
 
-   - the marker exists, spelled exactly, with a 40-character SHA;
+   - the marker appears in a review **posted by `claude[bot]`**. Not in a PR comment, not in a
+     review by any other account. An unfiltered search accepts a marker the PR author wrote,
+     which is exactly the identity this condition exists to exclude — and it would look
+     identical. This is the single most important check on this page.
+   - the marker is spelled exactly, with a 40-character SHA, on its own line;
    - that SHA equals `gh pr view <n> --json headRefOid -q .headRefOid` **character for character**;
    - the PR carries `review-passed` and **not** `changes-requested`. If the labels disagree with the
      marker, refuse and say so — one of the two is stale and you cannot tell which.
@@ -81,14 +85,20 @@ gh pr checks <n> --repo <repo>
 gh pr diff <n> --repo <repo>
 gh run view <run-id> --repo <repo> --log-failed     # when CI is red, read why
 
-# Condition 2. Note it does NOT read `reviews[].state` — see the condition for why that field is
-# useless here. The marker must carry the head SHA; `grep -Fx` so no SHA is matched as a pattern
-# and no annotated or quoted line can pass.
+# Condition 2. Two things matter and both are easy to get wrong.
+#
+# WHO posted it: only reviews by claude[bot] count. An unfiltered read accepts a marker written
+# by any account with comment access -- including the PR author's own, the identity this whole
+# mechanism exists to exclude. PR comments are never a source; only the reviews API, filtered.
+#
+# WHICH commit: `grep -Fx` matches a whole line, so it cannot be fooled by a SHA prefix or a
+# trailing annotation. It does NOT understand markdown -- a marker line inside a fenced code
+# block is still its own line and still matches. That is acceptable only because the source is
+# restricted to claude[bot]'s own reviews; it is not a defence against a hostile body.
 HEAD=$(gh pr view <n> --repo <repo> --json headRefOid -q .headRefOid)
-{ gh pr view <n> --repo <repo> --json comments -q '.comments[].body'
-  gh api repos/<repo>/pulls/<n>/reviews -q '.[].body'; } \
+gh api repos/<repo>/pulls/<n>/reviews \
+  -q '.[] | select(.user.login == "claude[bot]") | .body' \
   | grep -Fx "claude-review: pass @ $HEAD"
-gh pr view <n> --repo <repo> --json labels -q '[.labels[].name]'   # review-passed, not changes-requested
 ```
 
 Read the diff yourself. `gh pr view --json files` tells you what was touched; the diff tells you

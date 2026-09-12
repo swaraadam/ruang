@@ -151,18 +151,26 @@ gh pr edit <n> --add-label review-passed     --remove-label changes-requested   
 gh pr edit <n> --add-label changes-requested --remove-label review-passed       # any B1/B2
 ```
 
-**Then, only on a pass, the marker.** It is the last line of the summary review, nothing else on
-the line:
+**Then the marker.** Every run emits exactly one, as the last line of the summary review, with
+nothing else on the line:
 
 ```
-claude-review: pass @ <40-character head SHA>
+claude-review: pass @ <40-character head SHA>                 # no B1 and no B2
+claude-review: changes-requested @ <40-character head SHA>    # any B1 or B2
 ```
+
+Both are SHA-bound on purpose. A bare label cannot say *which* commit it judged, so a stale
+`changes-requested` from an earlier push would otherwise read as a verdict on code that was never
+reviewed. The CI step that proves a review ran accepts only these two, only from `claude[bot]`, and
+only for the current head SHA.
 
 ### The marker is load-bearing
 
 `pr-landing-agent` merges on it, unattended, while the owner is away. So:
 
-- Emit it **only** when there is no B1 and no B2 finding.
+- Emit `pass` **only** when there is no B1 and no B2 finding. Otherwise emit `changes-requested`.
+  Never omit the marker entirely — a missing marker is indistinguishable from a review that
+  crashed, and the CI step will fail the run rather than guess.
 - Take the SHA from the workflow prompt (`HEAD SHA`), never from memory, never abbreviated. The
   gate matches the whole line with `grep -Fx`, so an abbreviated or annotated SHA simply fails.
 - The SHA binding **is** the staleness rule: a push changes the head SHA, the marker stops
