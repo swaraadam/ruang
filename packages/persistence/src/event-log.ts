@@ -55,34 +55,37 @@ const NEXT_SEQ = `SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM event WHERE owne
 /**
  * Append one event and return the sequence it was given.
  *
- * **The read of `MAX(seq)` and the insert are one transaction.** Without that, two concurrent
- * appends for the same owner read the same maximum and the second insert fails on the primary key —
- * or worse, with a different schema, silently reuses a sequence. `better-sqlite3` is synchronous,
- * so the transaction is the whole of the protection: SQLite serialises writers, and the transaction
- * makes read-then-write atomic with respect to that serialisation.
+ * **The read of `MAX(seq)` and the insert are one immediate transaction.** `.immediate()` matters:
+ * `db.transaction(fn)` issues a deferred `BEGIN`, which takes no write lock until the first write —
+ * so two processes could both complete the `MAX(seq)` read before either upgraded, and the loser
+ * would fail on the primary key instead of serialising behind the winner. `BEGIN IMMEDIATE` takes
+ * the write lock before the read, so the second writer waits (up to `busy_timeout`) and then reads
+ * a maximum that already includes the first.
  *
  * Per owner, never global (§14.2, and the v1 schema's `PRIMARY KEY (owner_id, seq)`).
  */
 export const appendEvent = (db: Db, event: AppendableEvent): number =>
-  db.transaction((e: AppendableEvent): number => {
-    const { next } = db.prepare(NEXT_SEQ).get(e.owner_id) as { next: number };
-    db.prepare(INSERT).run({
-      owner_id: e.owner_id,
-      seq: next,
-      org_node_id: e.org_node_id,
-      ts: e.ts,
-      type: e.type,
-      project_id: e.project_id ?? null,
-      task_id: e.task_id ?? null,
-      attempt_id: e.attempt_id ?? null,
-      actor_member_id: e.actor_member_id,
-      actor_role_id: e.actor_role_id ?? null,
-      actor_runtime_id: e.actor_runtime_id ?? null,
-      payload: JSON.stringify(e.payload),
-      artifact_refs: JSON.stringify(e.artifact_refs ?? []),
-    });
-    return next;
-  })(event);
+  db
+    .transaction((e: AppendableEvent): number => {
+      const { next } = db.prepare(NEXT_SEQ).get(e.owner_id) as { next: number };
+      db.prepare(INSERT).run({
+        owner_id: e.owner_id,
+        seq: next,
+        org_node_id: e.org_node_id,
+        ts: e.ts,
+        type: e.type,
+        project_id: e.project_id ?? null,
+        task_id: e.task_id ?? null,
+        attempt_id: e.attempt_id ?? null,
+        actor_member_id: e.actor_member_id,
+        actor_role_id: e.actor_role_id ?? null,
+        actor_runtime_id: e.actor_runtime_id ?? null,
+        payload: JSON.stringify(e.payload),
+        artifact_refs: JSON.stringify(e.artifact_refs ?? []),
+      });
+      return next;
+    })
+    .immediate(event);
 
 type Row = {
   owner_id: string;
