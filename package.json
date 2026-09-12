@@ -16,6 +16,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@internal/adapter-host-darwin": "workspace:*",
+    "@internal/host-contract": "workspace:*",
+    "@internal/protocol": "workspace:*",
     "@types/node": "^22.20.1",
     "eslint": "^10.10.0",
     "prettier": "^3.9.6",
