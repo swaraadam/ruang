@@ -10,6 +10,14 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 PHASE="${1:-0}"
 ROOT="$(pwd -P)"
+# Shared literals and the probe state. RUNNER_* are initialised HERE and not read from the
+# environment: while they were only set inside the function, `RUNNER_PROBED=1` from a caller made
+# the probe skip itself, `set -u` then aborted 0.2 mid-condition, and the run ended with no
+# `GATE 0:` line at all - bypassing the count assertion that exists to catch a skipped condition.
+REFUSED='gate-check: refused to run -'
+NO_SUCH_SCRIPT='gate-check-control-no-such-script'
+RUNNER_PROBED=''
+RUNNER_PROBLEM=''
 
 # Re-entrancy guard. 0.2 shells out to `pnpm run verify` -> vitest -> tests/gate-check.test.ts ->
 # this script. Re-entering on the SAME tree is recursion and is refused however shallow, since a
@@ -17,8 +25,12 @@ ROOT="$(pwd -P)"
 # subject and terminates, so the guard keys on the resolved root, not on depth or elapsed time.
 case ":${GATE_CHECK_ROOTS:-}:" in
   *":$ROOT:"*)
-    echo "gate-check: re-entrant invocation on $ROOT - refusing." >&2
+    refusal_line="$REFUSED re-entrant invocation on $ROOT"
+    echo "$refusal_line" >&2
     echo "A gate condition must not run the gate. Run a single named test instead." >&2
+    # Also report on the channel the caller named, if it named one. Stdout is not that channel:
+    # a failing test's diff can quote this message, and the caller cannot tell the two apart.
+    [[ -n "${GATE_CHECK_REFUSAL_FILE:-}" ]] && echo "$refusal_line" >>"$GATE_CHECK_REFUSAL_FILE"
     exit 2
     ;;
 esac
@@ -31,6 +43,62 @@ unproven(){ CONDITIONS=$((CONDITIONS + 1)); echo "  UNPROVEN  $1 -> $2"; RC=1; }
 proof(){ echo "  proof     $1"; }
 RC=0
 
+# Every condition below hands its subject to an external runner, and the runner is not the subject.
+# A `pnpm` that is absent, or that rejects a flag in the position this gate uses it, exits non-zero
+# having never run the subject - and a check that did not run is UNPROVEN, never FAIL (#41).
+# (M-01, stated precisely: `-s` is an option of `run`/`exec`, not a global flag, so `pnpm -s verify`
+# exits 2 where `pnpm --silent verify` exits 0.) Two controls, because a probe with one possible
+# answer measures nothing - and each demands a SPECIFIC answer, because "any zero" plus "any
+# non-zero" is satisfied by a shim that runs nothing: the runner must execute code and hand back
+# its exact exit code, and must still report failure for a script that does not exist. Probed once
+# per process into a global; PATH does not change mid-run, and `$(...)` is a subshell that could
+# keep nothing.
+runner_problem(){
+  local v c
+  [[ -n "$RUNNER_PROBED" ]] && return
+  RUNNER_PROBED=1; RUNNER_PROBLEM=''
+  if ! command -v pnpm >/dev/null 2>&1; then RUNNER_PROBLEM="runner 'pnpm' is not on PATH"; return; fi
+  if ! command -v node >/dev/null 2>&1; then RUNNER_PROBLEM="runner 'node' is not on PATH"; return; fi
+  v="$(pnpm --version 2>/dev/null)"
+  pnpm --silent exec node -e 'process.exit(7)' >/dev/null 2>&1; c=$?
+  # Deliberately not "rejects --silent": a broken store, a missing node and a rejected flag all
+  # arrive here, and naming one of them would be a guess dressed as a finding.
+  if [[ $c -ne 7 ]]; then
+    RUNNER_PROBLEM="pnpm ${v:-?}: control invocation 'exec node -e process.exit(7)' returned $c, not 7"
+  elif pnpm --silent run "$NO_SUCH_SCRIPT" >/dev/null 2>&1; then
+    RUNNER_PROBLEM="pnpm ${v:-?} reports success for the script '$NO_SUCH_SCRIPT', which does not exist"
+  fi
+}
+
+# 0.2. `pnpm --silent run verify` also returns non-zero when pnpm is missing, when a flag was
+# rejected, when there is no verify script at all, and when the run refused itself; the old code
+# called every one of those "pnpm verify failing" and discarded the explanation with `2>&1`.
+# Prove the runner, prove the subject exists, and only then read the exit code.
+check_verify(){
+  local cmd rc sig refusal
+  proof "pnpm --silent exec node -e 'process.exit(7)' (control), then pnpm --silent run verify"
+  runner_problem
+  [[ -n "$RUNNER_PROBLEM" ]] && { unproven "pnpm verify" "$RUNNER_PROBLEM; the check did not run"; return; }
+  # A package.json that CONTAINS the text "verify" is not a verify script. `grep -q '"verify"'`
+  # matched a `verify` key anywhere in the file and matched `"verify": ""`; pnpm rejects both as a
+  # missing script, and the gate reported that non-zero exit as a failing verify. Read the value.
+  cmd="$(node -e 'const v=(JSON.parse(require("fs").readFileSync("package.json","utf8")).scripts||{}).verify;
+process.stdout.write(typeof v === "string" ? v.trim() : "")' 2>/dev/null)"
+  [[ -n "$cmd" ]] || { unproven "pnpm verify" "no verify script readable in package.json (P0-01)"; return; }
+  # A refusal is "did not run", so it is UNPROVEN and carries its own reason - but the evidence
+  # for it is a file this process created and named, never the child's stdout, which a failing
+  # test's diff can fill with the same words. Exit 2 is required as well: a genuine refusal inside
+  # a run that then fails for its own reasons (vitest carries on and exits 1) is a FAIL.
+  sig="$(mktemp "${TMPDIR:-/tmp}/gate-refusal.XXXXXX" 2>/dev/null)" ||
+    { unproven "pnpm verify" "cannot allocate a refusal channel; the check did not run"; return; }
+  GATE_CHECK_REFUSAL_FILE="$sig" pnpm --silent run verify >/dev/null 2>&1; rc=$?
+  refusal=''; [[ -s "$sig" ]] && read -r refusal <"$sig"
+  rm -f "$sig"
+  if [[ $rc -eq 0 ]]; then pass "pnpm verify green"
+  elif [[ $rc -eq 2 && -n "$refusal" ]]; then unproven "pnpm verify" "$refusal"
+  else fail "pnpm verify failing (exit $rc)"; fi
+}
+
 # Execute the declared test selector and report the runner's own machine-readable result. PASS
 # demands all of: a result was produced, no failures, at least one test actually executed, none
 # skipped, exit 0. "Nothing ran" and "all skipped" are green-but-vacuous - the same defect as an
@@ -40,6 +108,8 @@ check_by_running(){
   local label="$1" owner="$2"; shift 2
   local out rc counts p f s
   proof "pnpm --silent exec vitest run --reporter=json $*"
+  runner_problem
+  [[ -n "$RUNNER_PROBLEM" ]] && { unproven "$label" "$RUNNER_PROBLEM; the check did not run; $owner"; return; }
   out="$(mktemp "${TMPDIR:-/tmp}/gate-result.XXXXXX")" ||
     { unproven "$label" "cannot allocate a result file; $owner"; return; }
   pnpm --silent exec vitest run --reporter=json --outputFile="$out" "$@" >/dev/null 2>&1
@@ -92,8 +162,26 @@ case "$PHASE" in
     if [[ ${#roots[@]} -gt 0 ]] && [[ -n "$(find "${roots[@]}" -type f -print -quit 2>/dev/null)" ]]; then
       scanned=1
     fi
+    # The audits are external commands too, and a mode bit is not a result (#41). `[[ -x ]]` is
+    # true for a bad shebang and for a directory - both exit >=126, which was reported as "audits
+    # failing" - and true for a zero-byte file, which exits 0 and was reported as PASS. So run
+    # each audit and read two things it cannot fake by existing: its exit code, and the verdict
+    # line it prints for itself. Exiting 0 while announcing nothing is not a pass. Still out of
+    # reach: a file that prints the line while scanning nothing. Closing that needs the audits to
+    # report what they scanned, which is a change to files this issue may not touch.
     proof "./scripts/audit-seams.sh && ./scripts/audit-identity.sh"
-    if ! ./scripts/audit-seams.sh >/dev/null 2>&1 || ! ./scripts/audit-identity.sh >/dev/null 2>&1; then
+    aproblem=; afail=0
+    for a in seams:SEAM identity:IDENTITY; do
+      aout="$(./scripts/audit-${a%%:*}.sh 2>&1)"; arc=$?
+      if [[ $arc -ge 126 ]]; then aproblem="./scripts/audit-${a%%:*}.sh could not be run (exit $arc)"
+      elif [[ $arc -ne 0 ]]; then afail=1
+      elif [[ "$aout" != *"${a##*:} AUDIT PASS"* ]]; then
+        aproblem="./scripts/audit-${a%%:*}.sh exited 0 without reporting a result"
+      fi
+    done
+    if [[ -n "$aproblem" ]]; then
+      unproven "audits" "$aproblem; the check did not run"
+    elif [[ $afail -ne 0 ]]; then
       fail "audits failing (run ./scripts/audit-seams.sh)"
     elif [[ $scanned -eq 0 ]]; then
       unproven "audits" "green but vacuous — no packages/, apps/ or adapters/ to scan (P0-01)"
@@ -102,12 +190,7 @@ case "$PHASE" in
     fi
 
     echo "0.2 verify gate"
-    # `pnpm -s` is rejected by pnpm >=12 (`unexpected argument '-s'`), which made this report FAIL
-    # unconditionally regardless of the real result. Use the long form.
-    proof "pnpm --silent run verify"
-    if [[ -f package.json ]] && grep -q '"verify"' package.json 2>/dev/null; then
-      if pnpm --silent run verify >/dev/null 2>&1; then pass "pnpm verify green"; else fail "pnpm verify failing"; fi
-    else unproven "pnpm verify" "no verify script yet (P0-01)"; fi
+    check_verify
 
     # 0.3 and 0.4 name the test that proves them and then run it. The name only decides whether
     # there is anything to run; the verdict comes from the runner's result alone, so a zero-byte
