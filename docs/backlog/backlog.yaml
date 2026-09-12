@@ -818,3 +818,29 @@ issues:
       - "a PR touching no guardrail path still passes without any label"
       - "the check still fails a guardrail-path PR that has no label"
 
+  - id: M-12
+    title: "A shell write can overwrite a guarded file the Edit deny protects"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    blocked_gate: "owner must change .claude/settings.json -- it is a guardrail path and the agent is denied Edit on it by design"
+    refs: "21, 8.1"
+    goal: |
+      The denies in .claude/settings.json are per-tool. Edit(./.github/workflows/**) refuses the Edit and
+      Write tools, and `cp` was refused too, but Bash(python3 *) is permitted and nothing inspects what a
+      permitted interpreter writes. An agent that wanted to edit a guarded file could do so; the only thing
+      stopping it on 2026-09-12 was choosing not to, and writing down that it had not. A permission file
+      that holds only against agents that respect it is decorative.
+      Distinct from M-10, which covers a NEW file escaping the deny by path. This is an EXISTING guarded
+      file being overwritten through a permitted tool.
+    scope:
+      - "decide the mechanism: a PreToolUse hook that inspects write targets, or narrowing the interpreter allows"
+      - "cover every guarded path, not only .github/workflows/**"
+      - "the fix must not block an agent writing ordinary files with python3 or a shell heredoc -- that is normal work"
+    acceptance:
+      - "a python3 heredoc writing .github/workflows/x.yml is refused (recorded probe)"
+      - "the same write to an ordinary path still succeeds (recorded probe)"
+      - "each guarded path is probed through Edit, Write, cp, mv and python3, and the results recorded"
+      - "no audit or check is weakened to make the probe pass"
+

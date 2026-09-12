@@ -181,9 +181,11 @@ only for the current head SHA.
   workflow change additionally cannot be reviewed at all, because `claude-code-action` skips itself
   on one. Say in the summary that the PR is owner-gated and why.
 - **`CLAUDE.md` does get a marker.** It is instructions to agents, not a check that runs, so
-  changing it weakens no audit and breaks no build. `guardrails.yml` gates it on the marker — never
-  on the `review-passed` label, because a label carries no commit identity and would survive a push
-  that changed the code it judged. It is still the file every other rule is read from, so apply the
+  changing it weakens no audit and breaks no build. `guardrails.yml` gates it on that marker —
+  never on the `review-passed` label, which carries no commit identity and would survive a push
+  that changed the code it judged. If that workflow still requires `owner-approved` for `CLAUDE.md`
+  when you read this, the paired config change has not been applied yet; emit the marker anyway,
+  and the check will simply keep asking for the label until it is. It is still the file every other rule is read from, so apply the
   B1 "weakened guardrail" test with full force before emitting a pass for one.
 
 ## Rules

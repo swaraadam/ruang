@@ -1,9 +1,16 @@
 # Proposed configuration
 
 Files here are **not live**. They replace files under `.github/workflows/`, a path agents are
-denied `Edit` on — a deny that held when these were written. Routing around it with a shell write
-is the behaviour `docs/adr/0003-agent-landing-authority.md` exists to forbid, so the change is
-staged here for the owner to apply instead.
+denied `Edit` on — a deny that held when these were written.
+
+The deny was respected rather than worked around. A shell write would very likely have succeeded:
+`Bash(python3 *)` is permitted and the deny is enforced per-tool, not on the resulting file. Doing
+that would have made the permission file decorative, which is the same shape as an agent editing
+its own permissions to obtain authority — the thing `docs/adr/0003-agent-landing-authority.md`
+stopped and wrote down rather than doing. So the change is staged here for the owner to apply.
+
+**That gap is real and is not filed anywhere yet.** M-10 covers new files escaping the deny; it
+does not cover a shell write overwriting a guarded file. Worth its own entry.
 
 **Nothing in this directory does anything until it is copied into place.** Landing it changes no
 behaviour.

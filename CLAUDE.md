@@ -128,7 +128,7 @@ Mirror the Director capability table from the blueprint — it applies to you, i
   owner-only file touched (`.github/workflows/**`, `.claude/settings.json`,
   `scripts/audit-*.sh`). Otherwise it requests
   changes. No other agent merges anything.
-- **Unattended merge is allowed. Two paths are never delegated.** The gate may merge while the
+- **Unattended merge is allowed. Three paths are never delegated.** The gate may merge while the
   owner is away, but never a PR touching **`.github/workflows/**`, `.claude/settings.json` or
   `scripts/audit-*.sh`** — CI, the agent permission file, and the scripts that enforce invariants
   8, 9 and 10. An agent must not weaken the build, widen its own capability, or loosen the checks
