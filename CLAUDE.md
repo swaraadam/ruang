@@ -125,13 +125,24 @@ Mirror the Director capability table from the blueprint — it applies to you, i
   Claude GitHub App — a **different identity** from the PR author, which is what makes it evidence),
   `security-reviewer` approved for apply/approval/credential/auth/budget changes, change set within
   budget or under a recorded owner waiver, every acceptance box tied to actual code, and no
-  guardrail file touched. Otherwise it requests changes. No other agent merges anything.
-- **Unattended merge is allowed, guardrail changes are not.** The gate may merge while the owner is
-  away, but never a PR touching `CLAUDE.md`, `.claude/settings.json`, `.github/workflows/**` or
-  `scripts/audit-*.sh`, and never one labelled `needs-owner`, `blocked-gate` or
-  `changes-requested`. It stops the run entirely when one defect shape appears three times across
-  different issues. A local `fresh-reviewer` marker is an author-side pre-check, never sufficient
-  alone — it runs as the same account that wrote the PR. The merge step remains discipline, not
+  owner-only file touched (`.github/workflows/**`, `.claude/settings.json`,
+  `scripts/audit-*.sh`). Otherwise it requests
+  changes. No other agent merges anything.
+- **Unattended merge is allowed. Two paths are never delegated.** The gate may merge while the
+  owner is away, but never a PR touching **`.github/workflows/**`, `.claude/settings.json` or
+  `scripts/audit-*.sh`** — CI, the agent permission file, and the scripts that enforce invariants
+  8, 9 and 10. An agent must not weaken the build, widen its own capability, or loosen the checks
+  that constrain it, and then merge that with nobody awake — however good the review was. A
+  workflow change additionally cannot be reviewed at all, because `claude-code-action` skips itself
+  on one. Those need `owner-approved`.
+  **`CLAUDE.md` alone is delegated**: it is instructions to agents, not a check that runs, so
+  changing it weakens no audit and breaks no build. It merges on a `claude-review: pass` marker for
+  the exact head SHA, never on the `review-passed` label, which carries no commit identity and
+  would survive a push that changed the code it judged.
+  Never merge a PR labelled `needs-owner`, `blocked-gate` or `changes-requested`, and stop the run
+  entirely when one defect shape appears three times across different issues. A local
+  `fresh-reviewer` marker is an author-side pre-check, never sufficient alone — it runs as the same
+  account that wrote the PR. The merge step remains discipline, not
   enforcement: ADR-0003 and ADR-0005 say so plainly rather than implying a boundary that is not
   there.
 - **Never edit the guardrails to get green.** `scripts/audit-seams.sh`,
