@@ -26,6 +26,10 @@ def body(i):
     if i.get("blocked_gate"):
         lines += ["## Blocked by external gate", f"⛔ {i['blocked_gate']}", "",
                   "Do not start this issue until the owner closes the gate.", ""]
+    if i.get("budget_waiver"):
+        # Blueprint 16.2: only the owner may waive, and the waiver is durable evidence. A waiver
+        # that renders nowhere is not evidence, so it belongs in the issue body, not just the file.
+        lines += ["## Change budget waiver (owner)", i["budget_waiver"].strip(), ""]
     lines += ["## Blueprint references", f"Sections {i.get('refs','-')} of `docs/blueprint/v0.7.md`", ""]
     lines += ["## Definition of done",
               "See `CLAUDE.md` §7 and `.claude/skills/issue-workflow/SKILL.md`. Required: `pnpm verify` green, "
