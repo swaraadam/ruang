@@ -63,7 +63,8 @@ Merge **only** when every one of these holds. Any single failure means `request-
 3. **`security-reviewer` has approved**, if the change touches apply, approvals, credentials, auth,
    budgets, the credential broker, WebAuthn, reversibility classification, or egress. When in doubt
    it touches them.
-4. **The change set is within budget** — the issue's `change_budget`, else 1250, or the owner
+4. **The change set is within budget** — the issue's `change_budget`, else 1250. Count authored
+   lines; a generated lockfile is not review burden. Or the owner
    recorded an explicit waiver on the issue. A waiver must be *on the issue*, from the owner, with a
    reason. "The author said it was fine" is not a waiver.
 5. **Every acceptance checkbox is verified against the code**, not against the author's summary.

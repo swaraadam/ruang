@@ -39,10 +39,15 @@ the point where the four issues above would have triggered a waiver, and below t
 diff stops being reviewable in one sitting. The honest description is a working number, revisable
 when evidence says otherwise.
 
-**It is per Project, and an issue may set its own.** §16.6 makes the budget a Project property;
-§7.2 makes a Role able to tighten a Project's limits and never loosen them. That direction is
-preserved: `change_budget` on an issue overrides the default; a Role may narrow further; nothing may
-widen except an owner waiver.
+**An issue may set its own, in either direction.** §16.6 makes the budget a review-burden property
+rather than a constant, and setting one on an issue is an owner act performed while grooming — which
+is the whole point: the size decision moves from 3am to daylight. Six of the six set below are
+*wider* than the default, and that is correct for what they are.
+
+What §7.2 constrains is a **Role against its Project**: a Role may tighten a Project's limits and
+never widen them. That is a different axis and is unchanged. An earlier draft of this ADR and of
+CLAUDE.md §10 conflated the two, stating that an issue could only tighten — while six issues in the
+same change widened. `claude[bot]` caught the contradiction.
 
 **Six issues now carry an explicit budget**, each with a one-line reason recorded next to it —
 P0-06, P0-07, P0-10, P0-13, P0-15, P0-17. Every one is large because of what it *is*: a capability

@@ -173,10 +173,12 @@ Phase 1 ends in a **mandatory two-week stop-and-use period**. Do not open Phase 
 
 ## 10. Style
 
-- Small, reviewable change sets. **Default change budget: 1250 lines per task.** It is a per-Project
-  guardrail on review burden (§16.6), not a universal constant: a Project sets its own, an issue may
-  set a tighter one, and a Role may tighten it further — **never loosen it** (§7.2). An issue's
-  `change_budget` overrides the default; absent means 1250.
+- Small, reviewable change sets. **Default change budget: 1250 lines per task.** It is a guardrail
+  on review burden (§16.6), not a universal constant.
+  An issue's `change_budget` overrides the default in **either direction** — setting it is an owner
+  act, done while grooming, and a task that is large by nature should say so before anyone starts.
+  Absent means 1250. What may never loosen is a **Role** against its Project: §7.2 lets a Role
+  tighten a Project's limits and never widen them, and that direction is unchanged here.
   Exceeding it still means splitting the issue, not shipping over. The number is a prompt to split
   early, not a ceiling to argue with — the real guardrail is the reviewer.
 - Types before implementation. `packages/protocol` unions are closed and versioned; adding a shape
