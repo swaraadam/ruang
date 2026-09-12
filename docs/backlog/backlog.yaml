@@ -38,17 +38,24 @@ issues:
     size: M
     depends_on: [P0-01, M-04]
     refs: "Appendix A, 14.2"
+    budget_waiver: |
+      Owner, 2026-09-12, on issue #2 (blueprint 16.2 -- only the owner may waive, and the waiver is
+      durable evidence). The 250-line budget is waived for this issue. Reason: 353 of 665 lines are one
+      repeating declarative shape, and splitting a closed union leaves main in a state where the
+      closed-union invariant is false.
+
     goal: The wire vocabulary, closed and versioned, with ephemeral data impossible to persist.
     scope:
       - "PROTOCOL_VERSION constant"
-      - "event envelope: seq, ts, type, owner_id, org_node_id, workspace_id?, task_id?, attempt_id?, actor, payload, artifact_refs[]"
+      - "event envelope: seq, ts, type, owner_id, org_node_id, project_id?, task_id?, attempt_id?, actor, payload, artifact_refs[]"
+      - "Appendix A.3 spells the scope column workspace_id; that is an erratum (section 3 makes Project the core entity) -- see docs/adr/0004-protocol-event-vocabulary.md"
       - every durable event type from Appendix A as a discriminated union with typed payloads
       - ephemeral channel types in a separate module with no shared persistable base type
       - runtime validators for every durable event
     acceptance:
       - "exhaustive switch over durable events compiles with a never check"
       - "a test asserts the persistence layer's type signature cannot accept an ephemeral message"
-      - "seam audit passes: no git/host/provider vocabulary in any exported name or field"
+      - "seam audit passes: no git or macOS vocabulary in any exported name or field (those are the patterns audit-seams.sh actually carries)"
       - "adding a type without bumping PROTOCOL_VERSION fails a test"
 
   - id: P0-03
@@ -559,6 +566,7 @@ issues:
       - "identity audit must scan config/ in addition to packages/, apps/, adapters/"
       - "the `.test.`/`.spec.` exemption must match the file path only, not any line whose content happens to contain that substring"
       - "keep the adapters/domain/code and adapters/host/darwin carve-outs intact"
+      - "add a provider-vocabulary pattern (vendor and runtime names) scanned outside adapters/provider/, folded in from P0-02 acceptance 3 -- see docs/adr/0004-protocol-event-vocabulary.md"
     acceptance:
       - "each of commitSha, commit_sha, gitRef, commits in packages/domain fails the seam audit (test)"
       - "each of IsOwner, is_owner, isOwner in packages/, apps/, adapters/, config/ fails the identity audit (test)"
@@ -567,6 +575,8 @@ issues:
       - "no audit is weakened: every violation class the audits caught before this issue still fails"
       - "no false positives: different, difference, commitment and branchless still pass in packages/domain (test)"
       - "basis_ref and basis.ref still pass -- they are the mandated core vocabulary (CLAUDE.md section 3, blueprint 12.3), not a leak (test)"
+      - "a vendor name in packages/protocol fails the seam audit, while the same name inside adapters/provider/ passes (test)"
+      - "actor.runtime_id in packages/protocol still passes -- it is the Seam D spelling mandated by blueprint 25.1, not a leak (test)"
 
   - id: M-03
     title: "CI workflow as tracked configuration"
