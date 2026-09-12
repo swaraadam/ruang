@@ -13,6 +13,7 @@
     { "path": "packages/persistence" },
     { "path": "packages/policy" },
     { "path": "packages/protocol" },
-    { "path": "tests" }
+    { "path": "tests" },
+    { "path": "tsconfig.scripts.json" }
   ]
 }
