@@ -28,7 +28,7 @@ defect.
    time.
 3. `scripts/sandbox.sh open <ISSUE-ID>` — a per-issue git worktree under `.sandboxes/`.
    **Parallel agents never share a working tree.** Branch name: `<issue-id>-<slug>`.
-4. Implement inside the change budget (250 lines for code tasks unless stated). Exceeding the
+4. Implement inside the change budget (the issue's `change_budget`, else 1250). Exceeding the
    budget means splitting the issue, not exceeding the budget.
 5. `pnpm verify`. Green, or stop.
 6. Evidence comment on the issue — this is task output, not a courtesy:

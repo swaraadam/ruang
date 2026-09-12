@@ -123,6 +123,8 @@ issues:
     agent: spine-engineer
     size: M
     depends_on: [P0-05]
+    change_budget: 900
+    budget_reason: "a capability matrix is one repeating declarative row per capability; the logic is small"
     refs: "7.1, 7.2, 7.3"
     goal: Authorization as data, correct on day one with exactly one human owner.
     scope:
@@ -142,6 +144,8 @@ issues:
     agent: host-darwin-engineer
     size: L
     depends_on: [P0-04]
+    change_budget: 1100
+    budget_reason: "a host adapter plus a test double is two implementations of one interface by definition"
     refs: "06, Appendix B.3"
     goal: All host specifics behind a narrow surface, provably not leaking.
     scope:
@@ -198,6 +202,8 @@ issues:
     agent: code-adapter-engineer
     size: L
     depends_on: [P0-04]
+    change_budget: 1400
+    budget_reason: "the full 13-method SPI over a real source of record: thirteen implementations, each small"
     refs: "5.3, 5.2.3, 13.2"
     goal: The first real adapter, with all substrate assumptions contained.
     scope:
@@ -254,6 +260,8 @@ issues:
     agent: contract-test-engineer
     size: L
     depends_on: [P0-04, M-05]
+    change_budget: 1100
+    budget_reason: "a contract suite is one case per SPI method per adapter, which is the point of it"
     refs: "20.1, 20.2"
     goal: The invariants become mechanical rather than remembered.
     scope:
@@ -290,6 +298,8 @@ issues:
     agent: provider-runtime-engineer
     size: M
     depends_on: [P0-02, P0-07]
+    change_budget: 1200
+    budget_reason: "two provider boundaries plus golden replay fixtures; fixtures dominate and are data"
     refs: "9.1, 9.3, 9.4, 20.4"
     goal: Two real runtimes behind a deliberately small substitution boundary.
     scope:
@@ -326,6 +336,8 @@ issues:
     agent: spine-engineer
     size: M
     depends_on: [P0-05]
+    change_budget: 700
+    budget_reason: "retention classes times GC guards is a table of cases, not branching logic"
     refs: "14.3"
     goal: Evidence outlives the run that produced it, and nothing needed is ever collected.
     scope:
