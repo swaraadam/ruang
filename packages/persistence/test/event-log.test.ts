@@ -124,6 +124,15 @@ describe('replay resumes from a sequence, or refuses (§15.2)', () => {
     db.close();
   });
 
+  it('refuses a page with a hole in the middle, not just a truncated start', () => {
+    // The head-only check would have returned [1,2,4] here and called it contiguous.
+    const db = seed();
+    for (let i = 0; i < 4; i += 1) appendEvent(db, ev());
+    db.prepare(`DELETE FROM event WHERE owner_id='o1' AND seq=3`).run();
+    expect(readSince(db, 'o1', 0)).toBeNull();
+    db.close();
+  });
+
   it('refuses with null when the resume point is ahead of the log', () => {
     const db = seed();
     appendEvent(db, ev());

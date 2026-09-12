@@ -136,7 +136,12 @@ export const readSince = (
     // Nothing after that point is only honest if that point exists, or is the very start.
     return afterSeq === 0 || afterSeq <= latestSeq(db, ownerId) ? [] : null;
   }
-  // A gap means the caller's resume point is behind what the log still holds.
-  if (rows[0]!.seq !== afterSeq + 1) return null;
+  // Every row must follow its predecessor, not just the first. Checking only the head catches a
+  // truncated start and misses a hole in the middle -- which cannot happen while nothing deletes,
+  // but "cannot happen today" is not "cannot be returned", and this is the one function a caller
+  // trusts to say the history is whole.
+  for (let i = 0; i < rows.length; i += 1) {
+    if (rows[i]!.seq !== afterSeq + 1 + i) return null;
+  }
   return rows.map(hydrate);
 };
