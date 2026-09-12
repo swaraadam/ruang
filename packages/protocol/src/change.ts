@@ -1,10 +1,9 @@
 /**
  * What changed, in a shape the core can render — blueprint §5.2.1.
  *
- * Part 2 of P0-03. `anchor.ts` owns where a change sits; this owns what it is and the set carrying
- * it. The core renders these without learning how an adapter produced them, and an adapter ships no
- * code to render one — "adapters do not ship browser code in v0.7". The type surface is data only,
- * which `change.test.ts` asserts by scanning every field name rather than trusting this comment.
+ * `anchor.ts` owns where a change sits; this owns what it is and the set carrying it. An adapter
+ * ships no code to render one — "adapters do not ship browser code in v0.7" — and the type surface
+ * is data only, which `change.test.ts` asserts by scanning field names rather than trusting this.
  */
 import { isAnchor, unionCheck } from './anchor.js';
 import { type Check, type Of, int, isRecord, list, oneOf, shape, str } from './check.js';
@@ -57,12 +56,9 @@ export const isChangeSet = (value: unknown): value is ChangeSet =>
   str(value['content_hash']);
 
 /**
- * Identity of the closed renderable vocabulary: every kind with its field names, in catalog order.
- *
- * `ANCHOR_FINGERPRINT` does the same for the anchor half in `anchor.ts`. Adding, removing or
- * renaming a case or a field changes this string, and `change.test.ts` pins it against
- * `PROTOCOL_VERSION` — §5.2.1's "new shapes require a protocol version bump and a renderer case",
- * enforced rather than asked for.
+ * Identity of the renderable vocabulary; `ANCHOR_FINGERPRINT` does the same for the anchor half.
+ * Renaming a case or a field changes this, and `change.test.ts` pins it against `PROTOCOL_VERSION`
+ * — §5.2.1's version-bump rule, enforced rather than asked for.
  */
 export const RENDERABLE_FINGERPRINT = RENDERABLE_CHANGE_KINDS.map(
   (k) => `change:${k}(${(RENDERABLE[k].fields ?? []).join(',')})`,
@@ -92,9 +88,8 @@ const canonical = (value: unknown): string => {
  * collision. If a change-set hash ever gates an apply decision, revisit then — it does not today.
  */
 export const changeSetHash = (set: Omit<ChangeSet, 'content_hash'>): string => {
-  // Both are neutralised, not just the id. `Omit` does not stop a full ChangeSet being passed:
-  // excess-property checks only apply to fresh literals, so a stored set would otherwise fold its
-  // own content_hash into the digest and never verify against itself.
+  // Both, not just the id: `Omit` does not stop a full ChangeSet being passed (excess-property
+  // checks apply only to fresh literals), so a stored set would fold its own hash into the digest.
   const content = { ...set, change_set_id: undefined, content_hash: undefined };
   let h1 = 0x811c9dc5;
   let h2 = 0x01000193;
