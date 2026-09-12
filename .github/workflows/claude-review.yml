@@ -119,6 +119,19 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          # claude-code-action refuses to run when a workflow file on the PR branch differs
+          # from the copy on the default branch -- its own protection against a PR editing the
+          # workflow to reach the secrets. It reports that skip as SUCCESS, which is how a
+          # no-op review reaches a green check. Such a PR is a guardrail change: owner-approved
+          # and owner-merged, never auto-merged, so it needs no marker. Say why, and fail --
+          # `claude-review` is not a required check, so a red one here blocks nothing.
+          if gh pr diff "$PR" --repo "$REPO" --name-only | grep -q '^\.github/workflows/'; then
+            echo "This PR changes .github/workflows/, so claude-code-action skips itself by"
+            echo "design and no review can run. That is expected. The PR is a guardrail change:"
+            echo "it needs the owner-approved label and an owner merge, not a review marker."
+            exit 1
+          fi
+
           bodies=$( { gh pr view "$PR" --repo "$REPO" --json comments -q '.comments[].body'
                       gh api "repos/$REPO/pulls/$PR/reviews" -q '.[].body'; } || true )
           labels=$(gh pr view "$PR" --repo "$REPO" --json labels -q '[.labels[].name] | join(",")')

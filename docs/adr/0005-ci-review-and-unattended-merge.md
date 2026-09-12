@@ -93,6 +93,32 @@ so a broken token means no marker, which means no merge. **That fails closed**, 
 
 **Foreclosed:** nothing. Removing the two workflow files returns the repo to owner-merged operation.
 
+## The reviewer cannot review its own workflow, by design
+
+`claude-code-action` refuses to run when a workflow file on the PR branch differs from the copy on
+the default branch — its protection against a PR editing the workflow to reach the repository's
+secrets. Measured on PR 50:
+
+```
+Skipping action due to workflow validation: ... must ... have identical content to the version
+on the repository's default branch.
+Exiting due to workflow validation skip
+end-action id=claude-review.run; outcome=success; conclusion=success
+```
+
+Two consequences, both load-bearing:
+
+1. **The reviewer starts working only once its workflow is on `main`.** Until then every run is a
+   skip. This ADR's own PR therefore cannot be reviewed by the thing it adds.
+2. **The skip is reported as `success`.** That is the second route to a green check that reviewed
+   nothing, alongside a missing token. The "Prove the review actually ran" step detects the
+   workflow-change case explicitly and fails with the reason, rather than letting it read as a
+   pass.
+
+This composes correctly rather than awkwardly: a PR touching `.github/workflows/**` is a guardrail
+change, so it is owner-approved and owner-merged and was never eligible for a marker. `claude-review`
+is not a required check, so failing it blocks nothing the owner wants to do.
+
 ## Known gaps — stated, not implied away
 
 1. **The merge step is still the author's own account.** Nothing server-side checks that condition 2
