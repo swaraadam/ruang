@@ -12,6 +12,7 @@
     }
   },
   "dependencies": {
+    "@internal/protocol": "workspace:*",
     "better-sqlite3": "^12.2.0"
   },
   "devDependencies": {

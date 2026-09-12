@@ -7,3 +7,5 @@ export {
   migrate,
   schemaFingerprint,
 } from './migrate.js';
+export type { AppendableEvent, StoredEvent } from './event-log.js';
+export { appendEvent, latestSeq, readSince } from './event-log.js';
