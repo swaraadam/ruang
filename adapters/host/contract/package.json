@@ -1,5 +1,5 @@
 {
-  "name": "@internal/adapter-host-darwin",
+  "name": "@internal/host-contract",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,5 @@
       "types": "./dist/src/index.d.ts",
       "default": "./dist/src/index.js"
     }
-  },
-  "dependencies": {
-    "@internal/host-contract": "workspace:*"
   }
 }

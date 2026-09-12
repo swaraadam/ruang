@@ -11,6 +11,15 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.10.0)
+      '@internal/adapter-host-darwin':
+        specifier: workspace:*
+        version: link:adapters/host/darwin
+      '@internal/host-contract':
+        specifier: workspace:*
+        version: link:adapters/host/contract
+      '@internal/protocol':
+        specifier: workspace:*
+        version: link:packages/protocol
       '@types/node':
         specifier: ^22.20.1
         version: 22.20.1
@@ -34,7 +43,13 @@ importers:
 
   adapters/domain/code: {}
 
-  adapters/host/darwin: {}
+  adapters/host/contract: {}
+
+  adapters/host/darwin:
+    dependencies:
+      '@internal/host-contract':
+        specifier: workspace:*
+        version: link:../contract
 
   adapters/provider/claude: {}
 

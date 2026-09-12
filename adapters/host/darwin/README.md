@@ -1,1 +1,1 @@
-# adapters/host/darwin — Owned by Seam B: sessions via tmux, autostart via LaunchAgent, paths, notifications. The only home for macOS vocabulary.
+# adapters/host/darwin — Owned by Seam B: sessions via tmux, autostart via a LaunchAgent manifest, path policy, local notifications, health probes. The only home for macOS vocabulary. It writes the autostart manifest and prints the owner procedure; it never runs the service manager.
