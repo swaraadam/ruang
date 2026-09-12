@@ -5,6 +5,7 @@
  * reconstruct any view from a snapshot (invariant 1). Anything that cannot meet that bar is an
  * ephemeral channel and lives in ./ephemeral.ts, which shares no type with this module.
  */
+import { CHANGE_ANCHOR_KINDS } from './change.js';
 import {
   type Check,
   bool,
@@ -30,8 +31,17 @@ const subject = {
   subject_id: str,
 };
 const basisInput = shape({ resource_id: str, version: str });
+/**
+ * The anchor vocabulary has one authoritative home (invariant 7): `change.ts`. This spelled the
+ * same four kinds out again, so a fifth kind added there would have left `review.thread.created`
+ * silently accepting a narrower set. `change.test.ts` pins the two together.
+ *
+ * The shapes stay different on purpose. A review thread stores an opaque `locator` because the
+ * thread only needs to point somewhere stable; a `ChangeAnchor` carries the per-kind coordinates
+ * the renderer needs. Same vocabulary, different depth.
+ */
 const anchor = shape({
-  kind: oneOf('text_range', 'asset_id', 'node_path', 'region'),
+  kind: oneOf(...CHANGE_ANCHOR_KINDS),
   locator: str,
 });
 const checkResult = shape({

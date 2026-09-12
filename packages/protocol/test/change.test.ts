@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHANGE_ANCHOR_KINDS,
+  isDurableEvent,
   CHANGE_FINGERPRINT,
   PROTOCOL_VERSION,
   RENDERABLE_CHANGE_KINDS,
@@ -11,6 +12,18 @@ import {
   isChangeSet,
   isRenderableChange,
 } from '../src/index.js';
+
+/** A `review.thread.created` envelope carrying a given anchor, for the invariant-7 pin below. */
+const threadCreated = (anchor: unknown) => ({
+  seq: 1,
+  ts: '2026-01-01T00:00:00.000Z',
+  type: 'review.thread.created',
+  owner_id: 'owner-1',
+  org_node_id: 'studio/engineering',
+  actor: { member_id: 'member-1', role_id: null, runtime_id: null },
+  payload: { thread_id: 't-1', task_id: 'task-1', attempt_id: 'a-1', anchor },
+  artifact_refs: [],
+});
 
 const assetDelta: RenderableChange = {
   kind: 'asset_delta',
@@ -49,6 +62,20 @@ describe('the unions are closed', () => {
       'region',
       'text_range',
     ]);
+  });
+
+  /**
+   * Invariant 7, one authoritative home per fact. `events.ts` needs the same vocabulary for
+   * `review.thread.created`; it now imports this list rather than restating it, and this pins that
+   * so a fifth kind added here cannot leave the event envelope accepting only four.
+   */
+  it('is the same vocabulary the event envelope anchors on', () => {
+    const envelopeAnchor = { kind: 'node_path', locator: 'scene/main#/root/camera' };
+    expect(isDurableEvent(threadCreated(envelopeAnchor))).toBe(true);
+    for (const kind of CHANGE_ANCHOR_KINDS) {
+      expect(isDurableEvent(threadCreated({ kind, locator: 'x' }))).toBe(true);
+    }
+    expect(isDurableEvent(threadCreated({ kind: 'byte_offset', locator: 'x' }))).toBe(false);
   });
 
   it('refuses a kind that is not in the union, however well-formed the rest is', () => {
