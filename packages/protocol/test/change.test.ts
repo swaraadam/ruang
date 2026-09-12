@@ -109,6 +109,13 @@ describe('the content hash is stable', () => {
     expect(changeSetHash({ ...set, change_set_id: 'cs-2' })).toBe(once);
   });
 
+  it('verifies a stored change set against its own hash', () => {
+    // The regression: `Omit` does not stop a full ChangeSet being passed, so a stored set used to
+    // fold its own content_hash into the digest and could never verify against itself.
+    const full: ChangeSet = { ...set, content_hash: changeSetHash(set) };
+    expect(changeSetHash(full)).toBe(full.content_hash);
+  });
+
   it('does not depend on the order keys were written in', () => {
     // JSON.stringify follows insertion order, so a value rebuilt field-by-field in a different
     // order serializes differently. The hash must not.

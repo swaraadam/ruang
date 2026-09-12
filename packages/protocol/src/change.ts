@@ -92,7 +92,10 @@ const canonical = (value: unknown): string => {
  * collision. If a change-set hash ever gates an apply decision, revisit then — it does not today.
  */
 export const changeSetHash = (set: Omit<ChangeSet, 'content_hash'>): string => {
-  const content = { ...set, change_set_id: undefined };
+  // Both are neutralised, not just the id. `Omit` does not stop a full ChangeSet being passed:
+  // excess-property checks only apply to fresh literals, so a stored set would otherwise fold its
+  // own content_hash into the digest and never verify against itself.
+  const content = { ...set, change_set_id: undefined, content_hash: undefined };
   let h1 = 0x811c9dc5;
   let h2 = 0x01000193;
   const text = canonical(content);
