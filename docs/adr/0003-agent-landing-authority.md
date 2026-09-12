@@ -91,22 +91,52 @@ Conflating them is what kept the backlog frozen. Keeping them separate is the po
   workflow runs `pnpm install --frozen-lockfile`. Until P0-01 lands, every main-based PR is red for
   that reason alone. This inverts the intended order: P0-01 must land first.
 
-## Known gap — this ADR is not fully implemented
+## The condition-2 mechanism, and why it is not a GitHub review
 
-Part 1 above is **incomplete in a way that blocks the whole mechanism.** The working copy of
-`.claude/settings.json` still contains `Bash(gh pr merge*)` in its deny list alongside the new
-narrower allow. Deny takes precedence over allow in Claude Code, so `gh pr merge` is refused —
-verified empirically: even `gh pr merge --help` is denied.
+Condition 2 requires an independent `fresh-reviewer` approval. The obvious implementation — read
+`reviews[].state == "APPROVED"` — **cannot work in this repository, and failing quietly is its worst
+property.**
 
-The agent that would have fixed it cannot: `Edit(./.claude/settings.json)` is itself denied, and
-routing around an enforced deny with a shell write is exactly the self-granting behaviour the deny
-exists to prevent. An agent must not be able to edit its own permission file to obtain merge
-authority, so the correct outcome is that it stopped and wrote this down.
+Every PR here is authored by `swaraadam`; agents review under that same account; **GitHub refuses
+self-approval and records `COMMENTED` instead.** Measured: the only two reviews ever recorded in
+this repo are `#29 swaraadam:COMMENTED` and `#33 swaraadam:COMMENTED`, and the 2026-09-10 run report
+documents one of them as an `approve` verdict that GitHub would not record as an approval.
 
-**Required owner action:** delete the line `"Bash(gh pr merge*)"` from the `deny` array in
-`.claude/settings.json`. The narrower `"Bash(gh pr merge * --squash --delete-branch*)"` allow is
-already present. Until then, `pr-landing-agent` can evaluate every landing condition but cannot
-execute the merge.
+A gate reading `reviews[].state` therefore either never fires, or is "fixed" by accepting
+`COMMENTED` as approval — which is the *assert a verification stronger than the one you ran* defect
+that stopped the 2026-09-10 run, installed permanently into the merge path.
+
+**Decision:** the mechanism is an explicit marker posted by `fresh-reviewer`, bound to the head SHA:
+
+```
+fresh-reviewer: approve @ <40-character head SHA>
+```
+
+The landing gate matches it literally and requires the SHA to equal `headRefOid`. The binding *is*
+the staleness rule from condition 2: a later push changes the head SHA, so the approval expires by
+construction instead of by anyone remembering to re-request it. `fresh-reviewer` emits the marker
+only for a plain `approve` verdict.
+
+| Option | Why not chosen |
+|---|---|
+| Read `reviews[].state == APPROVED` | Unreachable — it is the defect above |
+| Owner approves every PR | The gate then adds nothing over the owner merging by hand |
+| Separate machine account for agents, human account approves | The only option with real enforcement; needs an account and a token, and §8 forbids third-party account creation. Deferred — see below |
+
+## Known gap — this gate is discipline, not enforcement
+
+**Every agent acts as the same GitHub account.** Nothing technical stops an agent from writing the
+condition-2 marker itself and then merging. Branch protection requires `verify` and `guardrails`; it
+requires **zero approving reviews**, so even a genuine `APPROVED` would not be enforced server-side.
+
+This is stated in `pr-landing-agent.md` rather than implied away. Blueprint §8.1: intelligence is not
+the security boundary. The conditions are worth following because following them catches real
+defects — an agent that forges its own approval has not defeated a control, it has lied, and the
+honest description of the control is the one that lets a reader judge how much weight it carries.
+
+**Resolved since this ADR was drafted:** the owner has removed `Bash(gh pr merge*)` from the
+`.claude/settings.json` deny list; the narrower `Bash(gh pr merge * --squash --delete-branch*)` allow
+is in place and the deny list no longer blocks merging. The mechanism is executable.
 
 ## Reversibility
 
@@ -120,6 +150,11 @@ an external system. Branch protection is owner-controlled and unaffected either 
 - **Requiring a `security-reviewer` approval mechanically** rather than by the gate's own judgement
   — deferred until there is an apply/credential surface to protect (Phase 3). **Invariant held
   now:** the gate's conditions name the trigger explicitly, and Phase 0 has no such surface.
+- **Real enforcement of condition 2** — a separate machine account authoring agent PRs, so a human
+  account can post a review GitHub will record as `APPROVED` and branch protection can require it.
+  Deferred: §8 forbids third-party account creation, and it costs a credential to hold. **Invariant
+  held now:** the marker binds an approval to an exact SHA, so a stale approval is impossible even
+  though a forged one is not, and the gate says so in writing rather than claiming otherwise.
 - **A CODEOWNERS or required-review rule on the guardrail files** — deferred; today they are
   protected by the harness deny list, which binds agents but not a human with push access.
   **Invariant held now:** the gate rejects any PR whose diff touches them, so a guardrail change

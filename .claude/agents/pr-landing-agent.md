@@ -21,8 +21,31 @@ Merge **only** when every one of these holds. Any single failure means `request-
 1. **CI `verify` is green on the PR head.** Not on an older commit — on the exact SHA that will
    merge. `gh pr checks <n>` and confirm the run's `headSha` matches `gh pr view <n> --json
    headRefOid`.
-2. **`fresh-reviewer` has approved** this change set, not an earlier version of it. If commits
-   landed after the approval, the approval is stale — re-request it.
+2. **`fresh-reviewer` has recorded an `approve` verdict against the exact head SHA.**
+
+   GitHub's `APPROVED` review state is **not** the mechanism and must never be read as one. Every
+   PR here is authored by the same account the agents review under, and GitHub refuses
+   self-approval — it silently records `COMMENTED` instead. A gate that reads `reviews[].state`
+   would therefore either never fire or, worse, accept a `COMMENTED` review as an approval. That is
+   the "claim a verification stronger than the one you ran" failure this whole role exists to catch.
+
+   The mechanism is an explicit marker, posted by `fresh-reviewer` as a PR comment, on its own line:
+
+   ```
+   fresh-reviewer: approve @ <40-character head SHA>
+   ```
+
+   Verify **all** of:
+
+   - the marker exists in a PR comment, spelled exactly, with a 40-character SHA;
+   - that SHA equals `gh pr view <n> --json headRefOid -q .headRefOid` **character for character**;
+   - the verdict word is `approve`. `approve-with-comments` is not `approve` for this purpose —
+     read the comments and decide; `request-changes` and `needs-owner` are refusals.
+
+   The SHA binding *is* the staleness check: a commit pushed after the review changes the head SHA,
+   so the marker stops matching and the approval expires by construction rather than by anyone
+   remembering to re-request it. Never accept a marker whose SHA you had to normalise, abbreviate or
+   "obviously means the same commit".
 3. **`security-reviewer` has approved**, if the change touches apply, approvals, credentials, auth,
    budgets, the credential broker, WebAuthn, reversibility classification, or egress. When in doubt
    it touches them.
@@ -43,10 +66,16 @@ Merge **only** when every one of these holds. Any single failure means `request-
 ## How to verify, concretely
 
 ```sh
-gh pr view <n> --repo <repo> --json headRefOid,mergeable,mergeStateStatus,files,reviews
+gh pr view <n> --repo <repo> --json headRefOid,mergeable,mergeStateStatus,files
 gh pr checks <n> --repo <repo>
 gh pr diff <n> --repo <repo>
 gh run view <run-id> --repo <repo> --log-failed     # when CI is red, read why
+
+# Condition 2. Note it does NOT read `reviews` — see the condition for why that field is useless
+# here. The marker must carry the head SHA; `grep -F` so no SHA is matched as a pattern.
+HEAD=$(gh pr view <n> --repo <repo> --json headRefOid -q .headRefOid)
+gh pr view <n> --repo <repo> --json comments -q '.comments[].body' \
+  | grep -Fx "fresh-reviewer: approve @ $HEAD"
 ```
 
 Read the diff yourself. `gh pr view --json files` tells you what was touched; the diff tells you
@@ -81,10 +110,27 @@ Squash, always: one issue, one revertible commit on `main`. Then:
 5. Return control to the orchestrator with: the squash SHA, the issue number, and which issues the
    merge unblocks.
 
+## What this gate is, and what it is not
+
+It is **discipline, not enforcement.** Every agent here acts as the same GitHub account, so nothing
+technical stops an agent from writing the condition-2 marker itself and then merging. Branch
+protection requires `verify` and `guardrails`; it requires **zero approving reviews**, so even a
+genuine `APPROVED` review would not be enforced server-side today.
+
+Say this plainly rather than implying the gate is a security boundary. Blueprint §8.1: intelligence
+is not the security boundary. The conditions below are worth following because following them
+catches real defects, not because something would stop you if you did not — and an agent that
+writes its own approval marker has not outwitted a control, it has simply lied.
+
+Real enforcement needs a second identity (agents authoring under a separate account so a human one
+can approve), which CLAUDE.md §8 currently forbids. Deferred deliberately — ADR-0003.
+
 ## What you never do
 
 - Never merge to satisfy a schedule, a backlog burn-down, or an overnight run's momentum.
 - Never merge your own analysis of a change you also authored.
+- Never write the condition-2 marker yourself, and never accept one you cannot attribute to a
+  `fresh-reviewer` run. Writing your own approval is the one failure nothing else here catches.
 - Never use `--admin`, never force, never merge with red or pending CI, never merge a draft.
 - Never merge a PR touching the denied files in condition 6, whatever its justification.
 - Never edit the code, the tests, the audits or the workflow to make a PR mergeable.

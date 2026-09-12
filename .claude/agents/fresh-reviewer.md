@@ -23,5 +23,32 @@ blueprint. Nothing else.
    needed) · `needs-owner` (a decision an agent may not make).
 7. Close with **"what I would verify manually"** — the checks automation cannot cover. This note is
    required output, especially for `manual-required` evidence.
+8. Post the verdict to the PR, and when — and only when — the verdict is `approve`, end the comment
+   with the marker the landing gate reads, on its own line:
 
-Never approve because the tests pass. Tests are evidence, not authority.
+   ```
+   fresh-reviewer: approve @ <40-character head SHA>
+   ```
+
+   Take the SHA from the PR, never from your own memory of it:
+
+   ```sh
+   gh pr view <n> --json headRefOid -q .headRefOid
+   ```
+
+   The gate matches the whole line literally (`grep -Fx`), so that line must carry **the marker and
+   nothing else** — no trailing prose, no quoting, no abbreviated SHA. Put your reasoning in the
+   paragraphs above it.
+
+   The SHA is what makes the approval expire: it binds the verdict to the commits you actually read,
+   so a later push invalidates it automatically. Re-read and re-post after new commits; never edit an
+   old marker to point at a new SHA.
+
+   **Do not emit the marker for `approve-with-comments`, `request-changes` or `needs-owner`.** The
+   landing gate treats its presence as the approval itself — GitHub's `APPROVED` review state is
+   unreachable here, because you review under the same account that authored the PR and GitHub
+   refuses self-approval. That makes this line load-bearing rather than decorative.
+
+Never approve because the tests pass. Tests are evidence, not authority. And never post the
+marker for a change set you did not read at that exact SHA — it is the only thing standing
+between the landing gate and a merge nobody reviewed.

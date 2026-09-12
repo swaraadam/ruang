@@ -120,10 +120,13 @@ Mirror the Director capability table from the blueprint — it applies to you, i
   check — not by convention.
 - **Merging is allowed only through the landing gate.** `pr-landing-agent` is the sole agent that
   may merge, and only when every condition in `.claude/agents/pr-landing-agent.md` holds: CI
-  `verify` green on the exact head SHA, `fresh-reviewer` approved, `security-reviewer` approved for
-  apply/approval/credential/auth/budget changes, change set within budget or under a recorded owner
-  waiver, every acceptance box tied to actual code, and no denied file touched. Otherwise it
-  requests changes. No other agent merges anything.
+  `verify` green on the exact head SHA, a `fresh-reviewer` `approve` marker carrying that same head
+  SHA (**not** a GitHub `APPROVED` review — that state is unreachable while agents review under the
+  PR author's own account), `security-reviewer` approved for apply/approval/credential/auth/budget
+  changes, change set within budget or under a recorded owner waiver, every acceptance box tied to
+  actual code, and no denied file touched. Otherwise it requests changes. No other agent merges
+  anything. The gate is discipline, not enforcement — one account holds every role, and ADR-0003
+  says so plainly rather than implying a boundary that is not there.
 - **Never edit the guardrails to get green.** `scripts/audit-seams.sh`,
   `scripts/audit-identity.sh`, `.claude/settings.json` and `.github/workflows/**` are denied to
   agents. Weakening an audit, a CI workflow or the permission file is not a shortcut to a passing
