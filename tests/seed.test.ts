@@ -50,6 +50,33 @@ describe('development seed data', () => {
     );
   });
 
+  // Invariant 1. The unknown task is unknown in durable truth, not labelled unknown in a view:
+  // `task.stale` carries `staleness: 'unknown'` and, because unknown fails closed, no dispatch and
+  // no attempt follow it.
+  it('seeds a task whose basis staleness is genuinely unknown and which was never dispatched', () => {
+    const { db, summary } = seeded();
+    const replay = readSince(db, summary.ownerId, 0, 1000) ?? [];
+    const unknown = replay.filter(
+      (e) =>
+        e.type === 'task.stale' && (e.payload as { staleness: string }).staleness === 'unknown',
+    );
+    expect(unknown.map((e) => e.task_id)).toEqual(['dev-task-03']);
+    expect(
+      replay.filter((e) => e.type === 'task.dispatched' && e.task_id === 'dev-task-03'),
+    ).toEqual([]);
+    expect(
+      db.prepare(`SELECT COUNT(*) AS n FROM attempt WHERE task_id = ?`).get('dev-task-03'),
+    ).toEqual({ n: 0 });
+    // The basis ref is known; it is its *staleness* that is not. Nulling it would be a different
+    // lie — "no basis was ever captured".
+    expect(db.prepare(`SELECT state, basis_ref FROM task WHERE id = ?`).get('dev-task-03')).toEqual(
+      {
+        state: 'blocked_basis_unknown',
+        basis_ref: 'basis-0003',
+      },
+    );
+  });
+
   // Invariant 8: not "the rows I remembered to check", every row of every table that was written.
   it('writes owner_id and org_node_id on every seeded row, with only the v1 exception', () => {
     const { db } = seeded();
