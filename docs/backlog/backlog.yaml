@@ -444,15 +444,18 @@ issues:
       - "a ReversalPlan is distinguishable from the forward plan it reverses, or the reversibility class is renamed honestly"
       - "PROTOCOL_VERSION bump, closed union updated, renderer case added (CLAUDE.md section 10)"
       - "check against #78 that a step-up assertion cannot be replayed across two different applies"
+    # Mirrors issue #89's acceptance verbatim, with markdown formatting stripped -- this file
+    # is the source of truth for scope (backlog.yaml header, CLAUDE.md section 7.1) and must not
+    # drift from the issue generated out of it.
     acceptance:
       - "two ApplyPlans over materially different change sets produce different apply_plan_hash; the same change set reproduces the same one"
-      - "a stale basis input makes the plan non-fresh rather than vacuously fresh"
-      - "a ReversalPlan cannot be executed as the forward action it reverses"
+      - "basis.inputs is populated from the real basis, and a stale input makes the plan non-fresh"
+      - "a ReversalPlan cannot be mistaken for, or executed as, the forward action it reverses"
+      - "PROTOCOL_VERSION bumped, closed union updated, renderer case added"
       - "an approval bound to (action_fingerprint, target_ref, apply_plan_hash) cannot be replayed against a different apply -- tested, not asserted"
-      - "PROTOCOL_VERSION bumped and a renderer case exists for the changed shape"
-      - "the compensable claim at apply.ts:46-47 is either made true by the code or corrected"
+      - "contract tests live in tests/contract/ as *.contract.test.ts and pin discrimination rather than field presence"
+      - "the C4 claim at apply.ts:46-47 is either made true by the code or corrected"
       - "the kindOf claim at apply.ts:95 is decided together with it, not left standing untracked"
-
   - id: P0-19
     title: "Phase 0 exit gate: run gate-check and record the evidence"
     phase: 0
