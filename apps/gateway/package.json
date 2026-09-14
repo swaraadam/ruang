@@ -22,6 +22,6 @@
     "@types/ws": "^8.18.1"
   },
   "scripts": {
-    "start": "node -e \"import('./dist/src/index.js').then(m=>m.start())\""
+    "start": "node -e \"import('./dist/src/index.js').then(m=>m.start()).catch(e=>{console.error(e&&e.name==='GatewayStartupRefusal'?e.message:e);process.exitCode=1})\""
   }
 }

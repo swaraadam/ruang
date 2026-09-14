@@ -10,7 +10,8 @@
  *    deltas and progress ticks are not in the database at all (invariant 2), so there is nothing for
  *    a view to accidentally read.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import type { Db, StoredEvent } from '@internal/persistence';
@@ -155,14 +156,74 @@ export const createGateway = async (options: GatewayOptions): Promise<FastifyIns
 
 export const readOwnerFromEnv = (): string => process.env.OWNER_ID ?? 'dev-owner';
 
-/** Present so `pnpm dev` has something to exec. Nothing here runs at import. */
-export const start = async (): Promise<void> => {
+/**
+ * A startup condition this process can name, as opposed to a stack trace from three layers down.
+ * `name` is stable so the `start` script can print the message alone and keep stacks for the
+ * failures it did not anticipate.
+ */
+export class GatewayStartupRefusal extends Error {
+  public override readonly name = 'GatewayStartupRefusal';
+}
+
+/**
+ * Which database to open. The answer is always the caller's, never this process's.
+ *
+ * The gateway used to default to a repo-root-relative literal, and that single line was wrong twice:
+ * it spelled the filename itself (a second spelling of `config/naming.ts`'s `dbFile`, which CLAUDE.md
+ * §1 forbids while naming clearance is open) and it assumed a working directory this process does
+ * not have — `pnpm --filter @internal/gateway start` runs with cwd `apps/gateway/`, so the literal
+ * resolved to `apps/gateway/state/dev/...`. Guessing produced a path that existed nowhere.
+ *
+ * So it does not guess. A package deep in the tree cannot know the repo root and must not know the
+ * product's filenames; whoever knows both — `scripts/dev.sh`, a launch agent, a test — passes an
+ * absolute path. Refusing is invariant 4 applied to startup: an unknown basis for the whole
+ * snapshot refuses to serve rather than open some file and render whatever is in it.
+ */
+export const resolveDatabasePath = (env: NodeJS.ProcessEnv = process.env): string => {
+  const raw = env['SEED_DB_PATH'];
+  if (raw === undefined || raw.trim() === '') {
+    throw new GatewayStartupRefusal(
+      'refusing to start: no database was named.\n' +
+        '  set SEED_DB_PATH to the absolute path of the control-plane database.\n' +
+        '  `pnpm dev` does this for you from the one source (config/naming.ts via scripts/seed.ts);\n' +
+        '  this process does not name database files and does not know the repository root.',
+    );
+  }
+  const path = raw.trim();
+  if (!isAbsolute(path)) {
+    // A relative path here is resolved against `apps/gateway/`, which is never what the caller
+    // meant. Saying so beats opening the wrong file, or creating one.
+    throw new GatewayStartupRefusal(
+      `refusing to start: SEED_DB_PATH must be absolute, got ${path}\n` +
+        `  this process runs with cwd ${process.cwd()}, not the repository root.`,
+    );
+  }
+  if (!existsSync(path)) {
+    // better-sqlite3 would CREATE an empty database here, and an empty office is a claim: "the
+    // owner has no projects". Nothing durable ever said that. Invariant 1.
+    throw new GatewayStartupRefusal(
+      `refusing to start: no database at ${path}\n` +
+        '  run `pnpm seed` first — serving an empty database would render an office durable truth never said.',
+    );
+  }
+  return path;
+};
+
+/**
+ * Present so `pnpm dev` has something to exec. Nothing here runs at import.
+ *
+ * Returns the instance so a caller (a test, a supervisor) can close it. A server nobody can stop is
+ * a server nobody can test.
+ */
+export const start = async (): Promise<FastifyInstance> => {
   const { openDatabase } = await import('@internal/persistence');
-  const dbPath = process.env.SEED_DB_PATH ?? 'state/dev/control-plane.sqlite3';
+  const dbPath = resolveDatabasePath();
   const db = openDatabase(dbPath);
   const app = await createGateway({ db, owner_id: readOwnerFromEnv() });
   const port = Number(process.env.PORT ?? 4319);
   await app.listen({ port, host: '127.0.0.1' });
-  console.log(`gateway listening on http://127.0.0.1:${String(port)}  database: ${dbPath}`);
-  void readFileSync;
+  const address = app.server.address();
+  const bound = typeof address === 'object' && address !== null ? address.port : port;
+  console.log(`gateway listening on http://127.0.0.1:${String(bound)}  database: ${dbPath}`);
+  return app;
 };
