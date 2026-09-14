@@ -270,23 +270,36 @@ issues:
       - "a blocked queue behind a frozen lock raises attention"
 
   - id: P0-13
-    title: "Domain adapter contract suite, runnable against any adapter"
+    title: "The contract suite proves it can fail: a deliberately non-compliant adapter"
     phase: 0
     agent: contract-test-engineer
-    size: L
-    depends_on: [P0-04, M-05]
-    change_budget: 1100
-    budget_reason: "a contract suite is one case per SPI method per adapter, which is the point of it"
+    size: S
+    depends_on: [P0-04, M-05, P0-10]
+    change_budget: 300
+    budget_reason: |
+      Re-groomed 2026-09-14 by the owner (interactive session; agent wrote it as scribe).
+      Was size L / 1100 lines, costed as "one case per SPI method per adapter" -- that suite now
+      exists, delivered by PR #74 (P0-10). Five of the six original scope and acceptance items are
+      shipped; verified against .sandboxes/P0-10 at 73ad44b file-by-file, recorded on issue #13.
+      What remains is the negative test and re-verification of the two boxes #74 satisfied.
+      Leaving the budget at 1100 would invite padding toward a number that no longer describes the
+      work. CLAUDE.md section 10 lets an issue's budget move in either direction; this moves down.
     refs: "20.1, 20.2"
-    goal: The invariants become mechanical rather than remembered.
+    goal: |
+      A contract suite that has never been observed to fail is not yet evidence. Make the suite's
+      rejection mechanical: a stub adapter that violates the SPI on purpose must be proved to fail
+      it, so a green run means the contract was enforced rather than merely executed.
     scope:
-      - one suite written against the SPI, parameterized by adapter
-      - "coverage per .claude/skills/contract-testing (basis, sandbox, change set, checks, apply, repair)"
-      - each test name quotes the blueprint section it enforces
+      - "a stub adapter that violates the SPI deliberately, with each violation naming the invariant it breaks"
+      - "a mechanism for asserting the suite REJECTS that stub -- it cannot simply join HARNESSES, or the suite fails for real"
+      - "re-verify the two acceptance boxes PR #74 satisfied, against the merged tree rather than the sandbox"
+      - "stacks on p0-10: it edits tests/contract/domain-adapter.contract.test.ts and harness.ts, which PR #74 owns"
     acceptance:
-      - "suite runs green against the code adapter and is registered in pnpm verify"
-      - "no adapter-private contract test exists"
-      - "a deliberately non-compliant stub adapter fails the suite (negative test)"
+      - "a deliberately non-compliant stub adapter fails the suite, and the failure is asserted rather than observed by eye"
+      - "the assertion mechanism does not make the real suite red, and does not require an adapter-private contract test"
+      - "each stub violation names the invariant or blueprint section it breaks"
+      - "re-confirmed on the merged tree: the suite runs green against the code adapter and is registered in pnpm verify"
+      - "re-confirmed on the merged tree: no adapter-private contract test exists"
 
   - id: P0-14
     title: "Apply planning, credential broker skeleton and action fingerprint"
