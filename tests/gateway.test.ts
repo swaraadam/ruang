@@ -2,9 +2,10 @@
  * P0-09 acceptance, proved against a real Fastify instance over a real (in-memory) database rather
  * than against mocks: the point of the gateway is what it refuses, and a mock cannot refuse.
  */
-import { openMemoryDatabase, appendEvent } from '@internal/persistence';
+import { openMemoryDatabase, appendEvent, latestSeq } from '@internal/persistence';
 import type { Db } from '@internal/persistence';
 import { createGateway, officeSnapshot } from '@internal/gateway';
+import { isDurableEvent } from '@internal/protocol';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 import { seedDatabase } from '../scripts/seed.js';
@@ -23,8 +24,15 @@ afterEach(async () => {
   running = null;
 });
 
-const started = async (db: Db): Promise<{ app: FastifyInstance; url: string }> => {
-  const app = await createGateway({ db, owner_id: OWNER });
+const started = async (
+  db: Db,
+  maxReplay?: number,
+): Promise<{ app: FastifyInstance; url: string }> => {
+  const app = await createGateway({
+    db,
+    owner_id: OWNER,
+    ...(maxReplay === undefined ? {} : { max_replay: maxReplay }),
+  });
   running = app;
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
@@ -143,8 +151,9 @@ describe('the event stream resumes from a sequence (§15.2)', () => {
   const openStream = async (
     db: Db,
     since: string,
+    maxReplay?: number,
   ): Promise<{ kind: string; reason?: string; events?: { seq: number }[] }> => {
-    const { url } = await started(db);
+    const { url } = await started(db, maxReplay);
     const { WebSocket } = await import('ws');
     const socket = new WebSocket(`${url.replace('http', 'ws')}/api/office/events?since=${since}`);
     return await new Promise((resolve, reject) => {
@@ -164,6 +173,27 @@ describe('the event stream resumes from a sequence (§15.2)', () => {
     // Exactly the gap: everything after 10, nothing at or before it.
     expect(frame.events?.[0]?.seq).toBe(11);
     expect(frame.events?.every((e) => e.seq > 10)).toBe(true);
+    // The frame AS SENT, checked with the same validator the writer used. `seq` alone was true of
+    // both the stored row and the envelope, so asserting on it accepted a wire shape the protocol
+    // never defined; the check has to run on the value the client actually receives.
+    expect(frame.events?.[0]).toBeDefined();
+    expect(isDurableEvent(frame.events?.[0])).toBe(true);
+    expect(frame.events?.every((e) => isDurableEvent(e))).toBe(true);
+  });
+
+  it('replays a page that exactly fills the limit instead of calling it an overflow', async () => {
+    const db = seeded();
+    // Exactly `max_replay` events remain. Reading only `max_replay` rows cannot tell that from an
+    // overflow, and the resync then said "exceeds one replay" about a gap that did not.
+    const frame = await openStream(db, String(latestSeq(db, OWNER) - 3), 3);
+    expect(frame.kind).toBe('events');
+    expect(frame.events?.length).toBe(3);
+  });
+
+  it('refuses to stream a gap larger than one replay', async () => {
+    const frame = await openStream(seeded(), '0', 3);
+    expect(frame.kind).toBe('resync');
+    expect(frame.reason).toMatch(/exceeds one replay/);
   });
 
   it('forces a fresh snapshot when recovery would be incomplete', async () => {

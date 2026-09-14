@@ -16,6 +16,7 @@ import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import type { Db, StoredEvent } from '@internal/persistence';
 import { readSince } from '@internal/persistence';
+import type { DurableEvent } from '@internal/protocol';
 import { isDurableEvent } from '@internal/protocol';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
@@ -32,7 +33,7 @@ export type GatewayOptions = {
 
 /** What the stream sends. A closed set: a renderer with no case for a frame must fail to compile. */
 export type StreamFrame =
-  | { readonly kind: 'events'; readonly events: readonly StoredEvent[] }
+  | { readonly kind: 'events'; readonly events: readonly DurableEvent[] }
   | { readonly kind: 'resync'; readonly reason: string; readonly seq: number }
   | { readonly kind: 'error'; readonly reason: string };
 
@@ -105,7 +106,11 @@ export const createGateway = async (options: GatewayOptions): Promise<FastifyIns
     // whole mechanism: an incomplete recovery must force a fresh snapshot rather than hand the
     // client a gap it cannot see. Same for a gap larger than one replay -- refusing to stream it is
     // cheaper than a client that believes it caught up.
-    const events = readSince(db, owner_id, since, maxReplay);
+    //
+    // It asks for one row MORE than it will ever send. Reading exactly `maxReplay` cannot tell a
+    // full page from a page that happens to end the log, so the old check called a complete replay
+    // an overflow and told the client so. Refusing is safe; a reason that is false is not.
+    const events = readSince(db, owner_id, since, maxReplay + 1);
     if (events === null) {
       send({
         kind: 'resync',
@@ -115,7 +120,7 @@ export const createGateway = async (options: GatewayOptions): Promise<FastifyIns
       socket.close();
       return;
     }
-    if (events.length === maxReplay) {
+    if (events.length > maxReplay) {
       send({
         kind: 'resync',
         reason: `the gap from ${String(since)} exceeds one replay; fetch /api/office/state`,
@@ -125,20 +130,26 @@ export const createGateway = async (options: GatewayOptions): Promise<FastifyIns
       return;
     }
 
-    // Validate outbound at the boundary too. An event this gateway cannot prove is well-formed is
-    // one it must not assert to a renderer -- the validator is the same one the writer used, so a
-    // failure here means the row is wrong, not the wire.
-    const bad = events.find((e) => !isDurableEvent(toEnvelope(e)));
-    if (bad !== undefined) {
-      send({
-        kind: 'error',
-        reason: `stored event at seq ${String(bad.seq)} is not a durable event`,
-      });
-      socket.close();
-      return;
+    // Validate outbound at the boundary too, and SEND THE VALUE THAT PASSED. Checking one shape and
+    // transmitting another proves nothing about what the renderer receives, so each envelope is
+    // built once, validated, and kept; the row itself never reaches the wire. An event this gateway
+    // cannot prove is well-formed is one it must not assert to a renderer -- the validator is the
+    // same one the writer used, so a failure here means the row is wrong, not the wire.
+    const envelopes: DurableEvent[] = [];
+    for (const e of events) {
+      const envelope = toEnvelope(e);
+      if (!isDurableEvent(envelope)) {
+        send({
+          kind: 'error',
+          reason: `stored event at seq ${String(e.seq)} is not a durable event`,
+        });
+        socket.close();
+        return;
+      }
+      envelopes.push(envelope);
     }
 
-    send({ kind: 'events', events });
+    send({ kind: 'events', events: envelopes });
 
     // Inbound is validated and then refused: there is no operation to perform here yet, and a
     // silently ignored message teaches a client that it was accepted.
