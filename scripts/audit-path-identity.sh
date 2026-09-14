@@ -77,17 +77,42 @@ import os, re, sys
 
 SINKS = r"(?:rmSync|rmdirSync|unlinkSync|writeFileSync|appendFileSync|copyFileSync|readFileSync|mkdirSync|existsSync|statSync|lstatSync|realpathSync|createWriteStream|createReadStream|openDatabase|renameSync|symlinkSync|readdirSync)"
 BUILDERS = r"(?:join|resolve)"
-CALL = re.compile(rf"\b(?:{SINKS}|{BUILDERS})\s*\(([^)]*)\)")
+CALL_OPEN = re.compile(rf"\b(?:{SINKS}|{BUILDERS})\s*\(")
+
+
+def call_args(line):
+    """Yield the BALANCED argument text of each sink/builder call on this line.
+
+    A naive [^)]* capture truncates at the first nested call's closing paren, so
+    `join(sanitizeRoot(root), sandbox_id)` would hide sandbox_id completely -- the exact
+    "guarded one identifier, missed the sibling" shape this audit exists to catch, in the
+    one arrangement where it slips through silently. Depth-counting instead.
+    """
+    for m in CALL_OPEN.finditer(line):
+        depth, i = 1, m.end()
+        while i < len(line) and depth:
+            if line[i] == "(":
+                depth += 1
+            elif line[i] == ")":
+                depth -= 1
+            i += 1
+        yield line[m.end(): (i - 1) if depth == 0 else len(line)]
 # a template literal carrying both a path separator and an interpolation
 TMPL = re.compile(r"`[^`]*/[^`]*\$\{[^}]+\}[^`]*`|`[^`]*\$\{[^}]+\}[^`]*/[^`]*`")
 IDENT = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
-# a validator used as a CALL, not a word in prose
+# A validator used as a CALL, not a word in prose. This list is a TRUST DECLARATION and is
+# deliberately narrow: names here are believed to enforce containment. Adding a name because real
+# code fails the audit is the same move as widening a deny-list to admit an attack -- I did exactly
+# that with `locate` while drafting this, and it silently cleared an unvalidated sibling argument.
+# A call site that genuinely is safe gets the `path-identity:` annotation, not a new entry here.
 VALIDATOR_CALL = re.compile(
     r"\b(?:assertSafe[A-Za-z]*|sanitize[A-Za-z]*|assertWithinRoot|pathPolicy|path_policy"
     r"|isSafe[A-Za-z]*|validate[A-Za-z]*|refuse[A-Z][A-Za-z]*|guard[A-Za-z]*)\s*\("
 )
 ANNOT = re.compile(r"path-identity:")
-PARAM_DECL = re.compile(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*[A-Za-z_$\[{]")
+PARAM_DECL = re.compile(
+    r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?!true\b|false\b|null\b|undefined\b)[A-Za-z_$\[{]"
+)
 LOCAL_DECL = re.compile(r"\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=")
 # Markup, not a filesystem path: a template building XML/HTML is not this audit's business.
 MARKUP = re.compile(r"[<>]")
@@ -127,9 +152,20 @@ for root in sys.argv[1:]:
             params = set()
             locals_ = set()
             for ln in lines:
-                if VALIDATOR_CALL.search(ln):
-                    for i in IDENT.findall(ln):
-                        validated.add(i)
+                # Only the validator's OWN arguments count as validated. Taking every identifier
+                # on the line would clear `sandbox_id` in
+                #     join(sanitizeRoot(root), sandbox_id)
+                # merely because it sits next to a validator call -- which is the precise
+                # arrangement this audit exists to catch, and it passed until this was fixed.
+                for vm in VALIDATOR_CALL.finditer(ln):
+                    depth, i = 1, vm.end()
+                    while i < len(ln) and depth:
+                        if ln[i] == "(":
+                            depth += 1
+                        elif ln[i] == ")":
+                            depth -= 1
+                        i += 1
+                    validated |= idents(ln[vm.end(): (i - 1) if depth == 0 else len(ln)])
                 # A typed binding `name: Type` is a parameter or a field -- i.e. a value that
                 # arrived from outside this function. Those are the ones worth auditing.
                 for m in PARAM_DECL.finditer(ln):
@@ -146,8 +182,7 @@ for root in sys.argv[1:]:
                 if n > 1 and ANNOT.search(lines[n - 2]):
                     continue
                 cand = set()
-                for m in CALL.finditer(ln):
-                    arg = m.group(1)
+                for arg in call_args(ln):
                     if LITERAL_ONLY.match(arg):
                         continue
                     cand |= idents(arg)
@@ -163,10 +198,11 @@ for root in sys.argv[1:]:
                     cand |= idents(tmpl)
                 if not cand:
                     continue
-                if cand & validated:
-                    continue
-                # Only caller-supplied values, not values this file derived itself.
+                # Only caller-supplied values, not values this file derived itself ...
                 cand &= params
+                # ... and every one of them must be validated, not merely one of them. A line
+                # that validates its first argument and not its second is the #74 defect.
+                cand -= validated
                 if not cand:
                     continue
                 findings.append(f"{path}:{n}: {ln.strip()[:110]}")
