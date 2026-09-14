@@ -10,5 +10,9 @@
       "types": "./dist/src/index.d.ts",
       "default": "./dist/src/index.js"
     }
+  },
+  "dependencies": {
+    "@internal/domain": "workspace:*",
+    "@internal/protocol": "workspace:*"
   }
 }

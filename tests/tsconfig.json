@@ -1,5 +1,10 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": { "outDir": "dist", "types": ["node"] },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "references": [
+    { "path": "../adapters/domain/code" },
+    { "path": "../packages/domain" },
+    { "path": "../packages/protocol" }
+  ]
 }

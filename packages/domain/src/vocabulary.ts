@@ -66,12 +66,26 @@ export type CheckSpec = {
   readonly required: boolean;
   readonly timeout_s: number;
   readonly flake_policy: 'mark' | 'fail';
+  /**
+   * The declared bound on attempts, first one included. Retries have to be *bounded* rather than
+   * merely discouraged, so the bound is data the spine can read and a reviewer can see.
+   */
+  readonly max_attempts: number;
 };
 
+/**
+ * §14.1 lists `skipped_reason` on this entity and P0-04 lost it; restored here rather than worked
+ * around in an adapter, which is what invariant 6 requires of evidence. A skip with no reason is
+ * indistinguishable from a check nobody wrote, and `attempts` is what keeps a `flaky` pass
+ * distinguishable from a clean one after the fact.
+ */
 export type CheckResult = {
   readonly check_id: string;
   readonly result: 'passed' | 'failed' | 'skipped' | 'flaky';
   readonly artifact_ref: string | null;
+  /** Non-null exactly when `result` is `skipped`. Never a guess, never an empty string. */
+  readonly skipped_reason: string | null;
+  readonly attempts: number;
 };
 
 /** §5.5, §12.4. Weakest to strongest; invariant 5 turns on the last one. */

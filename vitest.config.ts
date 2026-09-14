@@ -1,6 +1,21 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
+// Workspace packages resolve to their sources here, not to `dist/`. Gate condition 0.4 runs
+// `vitest run tests/contract/` directly, with no build step in front of it; resolving `@internal/*`
+// through each package's `exports` map would make the suite fail on an unbuilt tree and report that
+// as a failing contract, which is a false verdict about the adapter. That emitted ESM resolves
+// under plain node is a separate claim, proven in a real subprocess by module-resolution.test.ts.
+const source = (path: string): string => fileURLToPath(new URL(path, import.meta.url));
+
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@internal/adapter-domain-code': source('./adapters/domain/code/src/index.ts'),
+      '@internal/domain': source('./packages/domain/src/index.ts'),
+      '@internal/protocol': source('./packages/protocol/src/index.ts'),
+    },
+  },
   test: {
     include: ['{tests,apps,packages,adapters}/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', '.sandboxes/**'],
