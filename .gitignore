@@ -4,6 +4,8 @@ dist/
 logs/
 state/artifacts/
 state/debug/
+# `pnpm seed` writes here. Development scaffolding, never committed, never a production path.
+state/dev/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

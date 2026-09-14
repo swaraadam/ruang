@@ -124,6 +124,21 @@ issues:
     size: M
     depends_on: [P0-05]
     change_budget: 900
+    budget_waiver: |
+      Owner, 2026-09-14, on issue #6 (blueprint 16.2 -- only the owner may waive, and the waiver is
+      durable evidence). The 900-line budget is waived for this issue, for PR #70 at head 6c312433f,
+      ~2210 authored lines excluding pnpm-lock.yaml. Reason: 900 under-costed the configuration front
+      door -- config.ts (295) and load.ts (285) are load-time validation of a versioned data format,
+      not policy logic, and were not in view when the number was set. The author measured the overage,
+      offered a four-way re-cut, declined to shrink fail-closed mechanics to fit a line count, and
+      applied needs-owner rather than proceeding.
+
+      EXTENDED by the owner on 2026-09-14, same issue: the security review's M2 was directed to be
+      fixed before landing, so the waiver covers that fix too -- head 8584ae7, +183 lines (the
+      delegateReaches containment check and five tests), ~2393 total. Recorded because a waiver
+      mirrored here that stops at the original grant understates what was actually waived, and
+      backlog.yaml is read by people who do not open the issue. The issue comment remains
+      authoritative; this is a mirror, not a second grant.
     budget_reason: "a capability matrix is one repeating declarative row per capability; the logic is small"
     refs: "7.1, 7.2, 7.3"
     goal: Authorization as data, correct on day one with exactly one human owner.
@@ -145,6 +160,13 @@ issues:
     size: L
     depends_on: [P0-04]
     change_budget: 1100
+    budget_waiver: |
+      Owner, 2026-09-14, on issue #7 (blueprint 16.2 -- only the owner may waive, and the waiver is
+      durable evidence). The 1100-line budget is waived for this issue, for PR #72 at head d56eacb3e,
+      1748 authored lines. Reason: the overage is the adapters/host/contract package plus a
+      parameterized suite running the same cases against the test double and a scripted Darwin host.
+      Splitting it would land a seam whose two implementations are not yet proven to agree, which is
+      the property the suite exists to establish. Does not waive the two A3 items recorded on the issue.
     budget_reason: "a host adapter plus a test double is two implementations of one interface by definition"
     refs: "06, Appendix B.3"
     goal: All host specifics behind a narrow surface, provably not leaking.
@@ -181,7 +203,12 @@ issues:
     phase: 0
     agent: spine-engineer
     size: L
-    depends_on: [P0-05, P0-07]
+    # P0-07 removed 2026-09-14 by the owner: the snapshot endpoint and the durable event stream read
+    # SQLite rows and durable events and need nothing from the host seam. PR #84 was built and proved
+    # end to end against a HostAdapter that had not landed. The host-seam dependency belongs to
+    # terminal attach, which already carries it as P1-03 -> P0-08 -> P0-07. A depends_on edge that
+    # nothing uses blocks ready work for no reason -- it is what kept the floor off next-ready.py.
+    depends_on: [P0-05]
     refs: "4.1, 15.1, 15.2"
     goal: One local gateway, one authority, typed operations only.
     scope:
@@ -201,7 +228,10 @@ issues:
     phase: 0
     agent: code-adapter-engineer
     size: L
-    depends_on: [P0-04]
+    # P0-20 added 2026-09-14 by the owner: the security review's C3/C4 on PR #74 are not adapter
+    # patches -- the ApplyPlan shape cannot carry what invariant 5 requires. Split to P0-20; C1/C2
+    # stay here.
+    depends_on: [P0-04, P0-20]
     change_budget: 1400
     budget_reason: "the full 13-method SPI over a real source of record: thirteen implementations, each small"
     refs: "5.3, 5.2.3, 13.2"
@@ -255,23 +285,36 @@ issues:
       - "a blocked queue behind a frozen lock raises attention"
 
   - id: P0-13
-    title: "Domain adapter contract suite, runnable against any adapter"
+    title: "The contract suite proves it can fail: a deliberately non-compliant adapter"
     phase: 0
     agent: contract-test-engineer
-    size: L
-    depends_on: [P0-04, M-05]
-    change_budget: 1100
-    budget_reason: "a contract suite is one case per SPI method per adapter, which is the point of it"
+    size: S
+    depends_on: [P0-04, M-05, P0-10]
+    change_budget: 300
+    budget_reason: |
+      Re-groomed 2026-09-14 by the owner (interactive session; agent wrote it as scribe).
+      Was size L / 1100 lines, costed as "one case per SPI method per adapter" -- that suite now
+      exists, delivered by PR #74 (P0-10). Five of the six original scope and acceptance items are
+      shipped; verified against .sandboxes/P0-10 at 73ad44b file-by-file, recorded on issue #13.
+      What remains is the negative test and re-verification of the two boxes #74 satisfied.
+      Leaving the budget at 1100 would invite padding toward a number that no longer describes the
+      work. CLAUDE.md section 10 lets an issue's budget move in either direction; this moves down.
     refs: "20.1, 20.2"
-    goal: The invariants become mechanical rather than remembered.
+    goal: |
+      A contract suite that has never been observed to fail is not yet evidence. Make the suite's
+      rejection mechanical: a stub adapter that violates the SPI on purpose must be proved to fail
+      it, so a green run means the contract was enforced rather than merely executed.
     scope:
-      - one suite written against the SPI, parameterized by adapter
-      - "coverage per .claude/skills/contract-testing (basis, sandbox, change set, checks, apply, repair)"
-      - each test name quotes the blueprint section it enforces
+      - "a stub adapter that violates the SPI deliberately, with each violation naming the invariant it breaks"
+      - "a mechanism for asserting the suite REJECTS that stub -- it cannot simply join HARNESSES, or the suite fails for real"
+      - "re-verify the two acceptance boxes PR #74 satisfied, against the merged tree rather than the sandbox"
+      - "stacks on p0-10: it edits tests/contract/domain-adapter.contract.test.ts and harness.ts, which PR #74 owns"
     acceptance:
-      - "suite runs green against the code adapter and is registered in pnpm verify"
-      - "no adapter-private contract test exists"
-      - "a deliberately non-compliant stub adapter fails the suite (negative test)"
+      - "a deliberately non-compliant stub adapter fails the suite, and the failure is asserted rather than observed by eye"
+      - "the assertion mechanism does not make the real suite red, and does not require an adapter-private contract test"
+      - "each stub violation names the invariant or blueprint section it breaks"
+      - "re-confirmed on the merged tree: the suite runs green against the code adapter and is registered in pnpm verify"
+      - "re-confirmed on the merged tree: no adapter-private contract test exists"
 
   - id: P0-14
     title: "Apply planning, credential broker skeleton and action fingerprint"
@@ -366,6 +409,57 @@ issues:
       - "every attention item is reconstructable from durable truth after a restart (test)"
       - "no attention watcher consumes model tokens to observe time passing"
 
+  - id: P0-20
+    title: "ApplyPlan must identify what it applies: apply_plan_hash and real basis.inputs"
+    phase: 0
+    agent: protocol-engineer
+    size: M
+    depends_on: [P0-04, P0-05]
+    change_budget: 600
+    budget_reason: |
+      Authored 2026-09-14 by the owner, split out of P0-10 after the security review of PR #74.
+      A closed-union change plus a PROTOCOL_VERSION bump and a renderer case, with contract tests
+      that pin discrimination rather than field presence.
+    refs: "12.1, 16.2, 20.1"
+    goal: |
+      An ApplyPlan that cannot say what it applies cannot bind an approval to an action.
+
+      Proven against the real exported surface at 73ad44b56, not inferred: integrate() and publish()
+      take only CodeAdapterOptions, the change_set is read for change_size and discarded, and
+      basis.inputs is hard-coded []. A README typo fix and an 1800-line rewrite of
+      packages/policy/src/capability.ts produce byte-identical operations and target_refs. The
+      approval table binds on (action_fingerprint, target_ref, apply_plan_hash) -- all three
+      non-discriminating, and no apply_plan_hash exists on the plan at all. A step-up assertion
+      obtained for a trivial change is therefore replayable against a dangerous one.
+
+      That is invariant 5 failing open. The reversal is the same defect from the other side: the
+      ReversalPlan reuses the forward constructors, so executing the reversal of a publish publishes
+      again, while apply.ts:46-47 claims compensable means "a new forward action".
+
+      Pair with M-18 (#78). They are one defect from two directions -- an authorization that does not
+      bind to the action it authorizes -- and deciding them apart risks two mechanisms that never meet.
+    scope:
+      - "apply_plan_hash on ApplyPlan that actually discriminates; write down what it covers and why"
+      - "basis.inputs carries the real resource/version pairs, so the staleness gate can fire"
+      - "a ReversalPlan is distinguishable from the forward plan it reverses, or the reversibility class is renamed honestly"
+      - "PROTOCOL_VERSION bump, closed union updated, renderer case added (CLAUDE.md section 10)"
+      - "check against #78 that a step-up assertion cannot be replayed across two different applies"
+    # Mirrors issue #89's acceptance verbatim, with markdown formatting stripped -- this file
+    # is the source of truth for scope (backlog.yaml header, CLAUDE.md section 7.1) and must not
+    # drift from the issue generated out of it.
+    # Mirrors issue #89's acceptance verbatim, with markdown formatting stripped -- this file
+    # is the source of truth for scope (backlog.yaml header, CLAUDE.md section 7.1) and must not
+    # drift from the issue generated out of it. The last two are cited by quoted text rather than
+    # line number: the lines they named moved while PR #74 was still being fixed.
+    acceptance:
+      - "two ApplyPlans over materially different change sets produce different apply_plan_hash; the same change set reproduces the same one"
+      - "basis.inputs is populated from the real basis, and a stale input makes the plan non-fresh"
+      - "a ReversalPlan cannot be mistaken for, or executed as, the forward action it reverses"
+      - "PROTOCOL_VERSION bumped, closed union updated, renderer case added"
+      - "an approval bound to (action_fingerprint, target_ref, apply_plan_hash) cannot be replayed against a different apply -- tested, not asserted"
+      - "contract tests live in tests/contract/ as *.contract.test.ts and pin discrimination rather than field presence"
+      - "the compensable claim -- \"undoing a publish needs a new forward action instead, which is what compensable means\" -- is either made true by the code or corrected"
+      - "the reversal-kind claim -- \"an operation whose kind cannot be read is not_reversible with a reason\" -- is decided together with it, not left standing untracked"
   - id: P0-19
     title: "Phase 0 exit gate: run gate-check and record the evidence"
     phase: 0
@@ -884,3 +978,91 @@ issues:
       - "a normal review still passes unchanged -- the fix must not add a failure mode of its own"
       - "the three observed cases are re-checked against the fix and the results recorded"
       - "PR 60 is the worked example: changes-requested and pass on the identical SHA, 3h56m apart, the second after a re-run"
+
+  - id: M-15
+    title: "A second review workflow reports SUCCESS on every PR and posts no verdict"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    refs: "16.1, 16.2"
+    goal: |
+      Two workflows review every PR, and only one of them carries a verdict.
+
+      `claude-review.yml` (workflow "Claude PR review", job `review`) is the real gate: it runs the
+      reviewer and then proves, in the SAME job and the NEXT step, that a SHA-bound marker from
+      claude[bot] exists for the head it is verifying. `claude-code-review.yml` (workflow "Claude Code
+      Review", job `claude-review`) independently runs the generic `/code-review` plugin with only
+      `create_inline_comment` allowed. It cannot call `gh pr review`, so it can never emit a marker,
+      and it has no proof step -- so it reports SUCCESS on every PR regardless of what it found.
+
+      That green is the defect. It is the same shape as M-01: a check that decided nothing must not
+      report success. The two check names sit adjacent in the PR check list as `claude-review`
+      (always green, decides nothing) and `review` (the actual verdict), and the green one is named
+      almost exactly like the marker string `claude-review: pass`. On 2026-09-12 all three of PRs 70,
+      71 and 72 showed `claude-review SUCCESS` beside a red `review`, and the pairing was read as the
+      marker-posting reviewer finishing late and losing a race to the proof step.
+
+      IT IS NOT A RACE, and this entry exists partly to stop that hypothesis being re-filed. Measured
+      on the attempt-1 logs of runs 34710013508 (PR 70), 34710218114 (PR 72) and 34710271725 (PR 71):
+      the `Prove the review actually ran` step started and failed within ONE second in all three, and
+      in all three it printed "CHANGES REQUESTED: claude[bot] found blocking findings (B1/B2)" for the
+      exact head SHA. The marker was present and found immediately. A structural race is not available
+      here either: unlike guardrails.yml, which fires on `synchronize` as a separate workflow observing
+      another workflow's output and therefore genuinely raced (M-14), the proof step in claude-review.yml
+      runs after the reviewer step inside one job. It cannot start early. Adding M-14's polling to it
+      would only delay every correct rejection by the length of the poll, and would invite a later
+      "fix" that treats an absent marker as a pass -- which is the one failure this gate exists to
+      prevent.
+
+      The 12-14 minutes the duplicate takes is also paid on every push, for a second full-repo review
+      whose findings nothing gates on.
+    scope:
+      - "decide whether claude-code-review.yml is wanted at all: it duplicates the reviewer that already runs, at full token cost per push"
+      - "if it is kept, it must not report SUCCESS for a run that reached no verdict -- M-01's rule applies to it too"
+      - "if it is kept, rename the job so it is not confusable with the `review` check or the `claude-review: pass` marker string"
+      - "owner-only path: .github/workflows/** is denied to agents by .claude/settings.json, so this is filed and parked, never self-applied"
+    acceptance:
+      - "the PR check list contains exactly one check that can be mistaken for the verdict, and it is the one that carries it"
+      - "no check reports SUCCESS for a review that produced no verdict"
+      - "a changes-requested PR shows no green review-shaped check anywhere in its list"
+      - "the no-race finding above is preserved in the record so the polling fix is not re-proposed"
+
+  # ------------------------------------------------------- Development scaffolding
+  # Authored 2026-09-13 by the orchestrator under the owner's standing instruction:
+  # "If the slice needs something the backlog does not cover -- a dev script, seed data, a way to
+  # create a Project and a Task so the UI has something to show -- author the issue yourself, groom
+  # it with a budget, and build it." Seed data is development scaffolding. It is NOT a migration,
+  # and nothing in it may ever be depended on by production code.
+  - id: D-01
+    title: "Development seed data and a one-command dev run"
+    phase: 0
+    agent: spine-engineer
+    size: S
+    depends_on: [P0-05]
+    refs: "14.1, 14.2, 15.2"
+    change_budget: 400
+    budget_reason: "scaffolding, not mechanics: rows, events and two npm scripts"
+    goal: |
+      Two commands take a clean clone to durable state worth rendering, so the gateway and the web
+      shell have real snapshot and event history to read instead of a fixture. Every row the seed
+      writes is ordinary durable truth -- same tables, same append path, same replay guarantees --
+      so nothing downstream needs a "is this seeded?" branch.
+      Seed data is development scaffolding and is labelled as such at every layer. It is not a
+      migration: it does not live in migrations/, does not change the schema, and does not run as
+      part of migrate().
+    scope:
+      - "scripts/seed.ts, run as `pnpm seed`: one owner, one org node, one role, one member, one project, several tasks"
+      - "events appended through appendEvent so seeded history replays through readSince like any other"
+      - "seeded tasks span distinct attention-relevant states, including at least one whose basis is genuinely unknown"
+      - "writes to a dev database under state/, gitignored, never a production path"
+      - "refuses to run against a non-empty database unless --reset is passed"
+      - "console output states plainly that this is development seed data"
+      - "`pnpm dev` script; it starts the gateway once P0-09 lands, and says so honestly until then"
+    acceptance:
+      - "pnpm seed on a clean clone produces a database whose event log replays contiguously from seq 0"
+      - "at least one seeded task is in a state that must render as unknown, not as a guess (invariant 1)"
+      - "re-running pnpm seed without --reset refuses rather than duplicating or silently upserting"
+      - "every seeded row carries owner_id and org_node_id (invariant 8); identity audit passes"
+      - "the seed does not import from, write to, or register itself with packages/persistence/src/migrations"
+      - "pnpm verify passes with the seed script in the tree"

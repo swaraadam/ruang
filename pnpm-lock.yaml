@@ -17,6 +17,9 @@ importers:
       '@internal/host-contract':
         specifier: workspace:*
         version: link:adapters/host/contract
+      '@internal/persistence':
+        specifier: workspace:*
+        version: link:packages/persistence
       '@internal/protocol':
         specifier: workspace:*
         version: link:packages/protocol

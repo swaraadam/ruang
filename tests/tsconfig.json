@@ -5,6 +5,8 @@
   "references": [
     { "path": "../adapters/host/contract" },
     { "path": "../adapters/host/darwin" },
-    { "path": "../packages/protocol" }
+    { "path": "../packages/persistence" },
+    { "path": "../packages/protocol" },
+    { "path": "../tsconfig.scripts.json" }
   ]
 }
