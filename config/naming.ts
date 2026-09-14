@@ -23,7 +23,8 @@ export const PLACEHOLDER = {
 } as const;
 
 /**
- * The one canonical browser origin (blueprint §4.2, §1157) — the only origin the gateway serves.
+ * The one canonical browser origin (blueprint §4.2 Trust boundaries; Appendix D, the Phase 1
+ * canonical-origin gate) — the only origin the gateway serves.
  *
  * Derived, not typed out again: the hostname is spelled once, above, so clearance stays a one-file
  * change. Nothing here registers anything; `.invalid` resolves nowhere by definition (RFC 6761),
