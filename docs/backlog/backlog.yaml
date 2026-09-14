@@ -124,6 +124,21 @@ issues:
     size: M
     depends_on: [P0-05]
     change_budget: 900
+    budget_waiver: |
+      Owner, 2026-09-14, on issue #6 (blueprint 16.2 -- only the owner may waive, and the waiver is
+      durable evidence). The 900-line budget is waived for this issue, for PR #70 at head 6c312433f,
+      ~2210 authored lines excluding pnpm-lock.yaml. Reason: 900 under-costed the configuration front
+      door -- config.ts (295) and load.ts (285) are load-time validation of a versioned data format,
+      not policy logic, and were not in view when the number was set. The author measured the overage,
+      offered a four-way re-cut, declined to shrink fail-closed mechanics to fit a line count, and
+      applied needs-owner rather than proceeding.
+
+      EXTENDED by the owner on 2026-09-14, same issue: the security review's M2 was directed to be
+      fixed before landing, so the waiver covers that fix too -- head 8584ae7, +183 lines (the
+      delegateReaches containment check and five tests), ~2393 total. Recorded because a waiver
+      mirrored here that stops at the original grant understates what was actually waived, and
+      backlog.yaml is read by people who do not open the issue. The issue comment remains
+      authoritative; this is a mirror, not a second grant.
     budget_reason: "a capability matrix is one repeating declarative row per capability; the logic is small"
     refs: "7.1, 7.2, 7.3"
     goal: Authorization as data, correct on day one with exactly one human owner.
@@ -145,6 +160,13 @@ issues:
     size: L
     depends_on: [P0-04]
     change_budget: 1100
+    budget_waiver: |
+      Owner, 2026-09-14, on issue #7 (blueprint 16.2 -- only the owner may waive, and the waiver is
+      durable evidence). The 1100-line budget is waived for this issue, for PR #72 at head d56eacb3e,
+      1748 authored lines. Reason: the overage is the adapters/host/contract package plus a
+      parameterized suite running the same cases against the test double and a scripted Darwin host.
+      Splitting it would land a seam whose two implementations are not yet proven to agree, which is
+      the property the suite exists to establish. Does not waive the two A3 items recorded on the issue.
     budget_reason: "a host adapter plus a test double is two implementations of one interface by definition"
     refs: "06, Appendix B.3"
     goal: All host specifics behind a narrow surface, provably not leaking.
@@ -255,23 +277,36 @@ issues:
       - "a blocked queue behind a frozen lock raises attention"
 
   - id: P0-13
-    title: "Domain adapter contract suite, runnable against any adapter"
+    title: "The contract suite proves it can fail: a deliberately non-compliant adapter"
     phase: 0
     agent: contract-test-engineer
-    size: L
-    depends_on: [P0-04, M-05]
-    change_budget: 1100
-    budget_reason: "a contract suite is one case per SPI method per adapter, which is the point of it"
+    size: S
+    depends_on: [P0-04, M-05, P0-10]
+    change_budget: 300
+    budget_reason: |
+      Re-groomed 2026-09-14 by the owner (interactive session; agent wrote it as scribe).
+      Was size L / 1100 lines, costed as "one case per SPI method per adapter" -- that suite now
+      exists, delivered by PR #74 (P0-10). Five of the six original scope and acceptance items are
+      shipped; verified against .sandboxes/P0-10 at 73ad44b file-by-file, recorded on issue #13.
+      What remains is the negative test and re-verification of the two boxes #74 satisfied.
+      Leaving the budget at 1100 would invite padding toward a number that no longer describes the
+      work. CLAUDE.md section 10 lets an issue's budget move in either direction; this moves down.
     refs: "20.1, 20.2"
-    goal: The invariants become mechanical rather than remembered.
+    goal: |
+      A contract suite that has never been observed to fail is not yet evidence. Make the suite's
+      rejection mechanical: a stub adapter that violates the SPI on purpose must be proved to fail
+      it, so a green run means the contract was enforced rather than merely executed.
     scope:
-      - one suite written against the SPI, parameterized by adapter
-      - "coverage per .claude/skills/contract-testing (basis, sandbox, change set, checks, apply, repair)"
-      - each test name quotes the blueprint section it enforces
+      - "a stub adapter that violates the SPI deliberately, with each violation naming the invariant it breaks"
+      - "a mechanism for asserting the suite REJECTS that stub -- it cannot simply join HARNESSES, or the suite fails for real"
+      - "re-verify the two acceptance boxes PR #74 satisfied, against the merged tree rather than the sandbox"
+      - "stacks on p0-10: it edits tests/contract/domain-adapter.contract.test.ts and harness.ts, which PR #74 owns"
     acceptance:
-      - "suite runs green against the code adapter and is registered in pnpm verify"
-      - "no adapter-private contract test exists"
-      - "a deliberately non-compliant stub adapter fails the suite (negative test)"
+      - "a deliberately non-compliant stub adapter fails the suite, and the failure is asserted rather than observed by eye"
+      - "the assertion mechanism does not make the real suite red, and does not require an adapter-private contract test"
+      - "each stub violation names the invariant or blueprint section it breaks"
+      - "re-confirmed on the merged tree: the suite runs green against the code adapter and is registered in pnpm verify"
+      - "re-confirmed on the merged tree: no adapter-private contract test exists"
 
   - id: P0-14
     title: "Apply planning, credential broker skeleton and action fingerprint"
@@ -884,6 +919,55 @@ issues:
       - "a normal review still passes unchanged -- the fix must not add a failure mode of its own"
       - "the three observed cases are re-checked against the fix and the results recorded"
       - "PR 60 is the worked example: changes-requested and pass on the identical SHA, 3h56m apart, the second after a re-run"
+
+  - id: M-15
+    title: "A second review workflow reports SUCCESS on every PR and posts no verdict"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    refs: "16.1, 16.2"
+    goal: |
+      Two workflows review every PR, and only one of them carries a verdict.
+
+      `claude-review.yml` (workflow "Claude PR review", job `review`) is the real gate: it runs the
+      reviewer and then proves, in the SAME job and the NEXT step, that a SHA-bound marker from
+      claude[bot] exists for the head it is verifying. `claude-code-review.yml` (workflow "Claude Code
+      Review", job `claude-review`) independently runs the generic `/code-review` plugin with only
+      `create_inline_comment` allowed. It cannot call `gh pr review`, so it can never emit a marker,
+      and it has no proof step -- so it reports SUCCESS on every PR regardless of what it found.
+
+      That green is the defect. It is the same shape as M-01: a check that decided nothing must not
+      report success. The two check names sit adjacent in the PR check list as `claude-review`
+      (always green, decides nothing) and `review` (the actual verdict), and the green one is named
+      almost exactly like the marker string `claude-review: pass`. On 2026-09-12 all three of PRs 70,
+      71 and 72 showed `claude-review SUCCESS` beside a red `review`, and the pairing was read as the
+      marker-posting reviewer finishing late and losing a race to the proof step.
+
+      IT IS NOT A RACE, and this entry exists partly to stop that hypothesis being re-filed. Measured
+      on the attempt-1 logs of runs 34710013508 (PR 70), 34710218114 (PR 72) and 34710271725 (PR 71):
+      the `Prove the review actually ran` step started and failed within ONE second in all three, and
+      in all three it printed "CHANGES REQUESTED: claude[bot] found blocking findings (B1/B2)" for the
+      exact head SHA. The marker was present and found immediately. A structural race is not available
+      here either: unlike guardrails.yml, which fires on `synchronize` as a separate workflow observing
+      another workflow's output and therefore genuinely raced (M-14), the proof step in claude-review.yml
+      runs after the reviewer step inside one job. It cannot start early. Adding M-14's polling to it
+      would only delay every correct rejection by the length of the poll, and would invite a later
+      "fix" that treats an absent marker as a pass -- which is the one failure this gate exists to
+      prevent.
+
+      The 12-14 minutes the duplicate takes is also paid on every push, for a second full-repo review
+      whose findings nothing gates on.
+    scope:
+      - "decide whether claude-code-review.yml is wanted at all: it duplicates the reviewer that already runs, at full token cost per push"
+      - "if it is kept, it must not report SUCCESS for a run that reached no verdict -- M-01's rule applies to it too"
+      - "if it is kept, rename the job so it is not confusable with the `review` check or the `claude-review: pass` marker string"
+      - "owner-only path: .github/workflows/** is denied to agents by .claude/settings.json, so this is filed and parked, never self-applied"
+    acceptance:
+      - "the PR check list contains exactly one check that can be mistaken for the verdict, and it is the one that carries it"
+      - "no check reports SUCCESS for a review that produced no verdict"
+      - "a changes-requested PR shows no green review-shaped check anywhere in its list"
+      - "the no-race finding above is preserved in the record so the polling fix is not re-proposed"
 
   # ------------------------------------------------------- Development scaffolding
   # Authored 2026-09-13 by the orchestrator under the owner's standing instruction:
