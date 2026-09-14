@@ -370,6 +370,12 @@ describe('the mode of the manifest on disk', () => {
     expect((statSync(path).mode & 0o777).toString(8)).toBe('640');
   });
 
+  /**
+   * The direction rule itself is bound for EVERY adapter in `tests/contract/` now — it had to be,
+   * because the double implemented it backwards and this assertion could not see that. What stays
+   * here is the half only a real filesystem proves: that the bits `stat` reports afterwards are
+   * the ones the owner set, rather than a spelling the adapter stored and echoed back.
+   */
   it('leaves a manifest the owner made STRICTER alone: this narrows, it never widens', async () => {
     const plan = installable('placeholder.stricter');
     const autostart = createDarwinHostAdapter(real).autostart_contract();

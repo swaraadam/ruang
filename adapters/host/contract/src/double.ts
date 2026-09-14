@@ -29,10 +29,18 @@ import { summarizeProbes } from './spi.js';
 export type SessionStore = Map<string, HostSession>;
 export const createSessionStore = (): SessionStore => new Map();
 
-/** The one posture the double accepts for a manifest it wrote. Spelled like the real host's octal
- * so one shared contract assertion reads both implementations without branching on which it has.
+/** The one posture the double narrows TO. Spelled like the real host's octal so one shared
+ * contract assertion reads both implementations without branching on which it has.
  * Module-private: a caller that needed it would be a caller depending on the double's internals. */
 const DOUBLE_REQUIRED_ACCESS = '600';
+
+/** The double's postures are the real host's spelling, so they are read as octal and not as
+ * opaque labels: the direction rule below is about BITS, and a rule stated over strings is a
+ * rule that cannot tell `400` from `644`. Null for anything that is not a mode this double
+ * wrote or a test seeded in that spelling. */
+const OCTAL_MODE = /^[0-7]{3,4}$/;
+const parseMode = (spelling: string): number | null =>
+  OCTAL_MODE.test(spelling) ? Number.parseInt(spelling, 8) : null;
 
 export type HostDoubleOptions = {
   readonly now?: () => Date;
@@ -45,8 +53,9 @@ export type HostDoubleOptions = {
   readonly case_insensitive?: boolean;
   readonly sessions?: SessionStore;
   readonly manifests?: Map<string, string>;
-  /** Access posture per manifest path. Seeding a wide one is how a test says "an older version of
-   * this adapter wrote that file" without needing a filesystem to chmod. */
+  /** Access posture per manifest path, in the real host's octal spelling. Seeding a wide one is
+   * how a test says "an older version of this adapter wrote that file", and seeding a tighter one
+   * is how it says "the owner chmodded it", without needing a filesystem to chmod. */
   readonly manifest_modes?: Map<string, string>;
   readonly probe_overrides?: Partial<Record<ProbeKind, Partial<HealthProbe>>>;
   readonly notify_outcome?: NotificationOutcome;
@@ -72,11 +81,12 @@ export const createHostDouble = (options: HostDoubleOptions = {}): HostDouble =>
   const manifests = options.manifests ?? new Map<string, string>();
   /**
    * The double has no filesystem, so it keeps the one property of one that this contract cares
-   * about: who may read a stored manifest. Not a simulated filesystem and not a mode bit — a
-   * string in the same position the real host's octal goes, so that "install and repair correct a
-   * posture the body did not change" is provable on any platform rather than only on Darwin.
-   * `DOUBLE_REQUIRED_ACCESS` stands where the real host's required mode stands; the double is not
-   * claiming POSIX, it is claiming that it has one required answer and reports departures from it.
+   * about: who may read a stored manifest. Not a simulated filesystem — a string in the same
+   * position the real host's octal goes, so that "install and repair correct a posture the body
+   * did not change" is provable on any platform rather than only on Darwin.
+   * `DOUBLE_REQUIRED_ACCESS` stands where the real host's required mode stands. The double is not
+   * claiming a filesystem; it is claiming the same required answer AND the same direction, which
+   * is why the spelling is read as octal rather than compared as a label (see `restrictAccess`).
    */
   const modes = options.manifest_modes ?? new Map<string, string>();
   const up = options.backend_available !== false;
@@ -192,10 +202,25 @@ export const createHostDouble = (options: HostDoubleOptions = {}): HostDouble =>
           modes.set(path, DOUBLE_REQUIRED_ACCESS);
         },
         readAccess: (path) => (manifests.has(path) ? (modes.get(path) ?? null) : null),
+        /**
+         * The real host's DIRECTION rule, not a shorter one that happens to agree on `644`.
+         *
+         * The test is "any group or other bit set", never "not equal to the required posture".
+         * Exact equality could not leave a TIGHTER manifest alone: it took `400` to `600`, adding
+         * the owner write bit, and reported that as `narrowed 400 to 600` — a false sentence in
+         * the one field this contract added so that `repair` would stop misreporting (invariant
+         * 1). Backwards here is worse than absent, because this double is both the reference a
+         * second adapter copies and the implementation the core suite proves the rule against.
+         *
+         * `null` covers no file and a spelling this double cannot read as octal, for the same
+         * reason the real host returns it for no file and for cannot-stat: neither is a narrowing
+         * this call performed, and reporting one would be inventing an action.
+         */
         restrictAccess: (path) => {
           const before = modes.get(path);
           if (!manifests.has(path) || before === undefined) return null;
-          if (before === DOUBLE_REQUIRED_ACCESS) return null;
+          const mode = parseMode(before);
+          if (mode === null || (mode & 0o077) === 0) return null;
           modes.set(path, DOUBLE_REQUIRED_ACCESS);
           return `narrowed ${path} from ${before} to ${DOUBLE_REQUIRED_ACCESS}`;
         },

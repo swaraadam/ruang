@@ -38,10 +38,16 @@ type Fixture = {
   tamper(unit_id: string): void;
   /** Put a file this adapter never wrote at the path a unit id composes to. Not repairable. */
   plantForeign(unit_id: string): void;
-  /** Leave the manifest's access posture where an OLDER version of this adapter left it: wider
-   * than required, with the body untouched. The body is what makes it a regression fixture — a
-   * plan that still renders these exact bytes is the upgrade nothing rewrites. */
-  widenAccess(unit_id: string): void;
+  /**
+   * Put the manifest's access posture at `mode`, in the octal spelling both hosts use, leaving the
+   * body untouched. The body is what makes it a regression fixture — a plan that still renders
+   * these exact bytes is the upgrade nothing rewrites.
+   *
+   * Takes the mode rather than only widening, because the contract constrains BOTH directions: a
+   * posture an older adapter version left wide must be narrowed, and one the owner tightened must
+   * be left exactly where it is.
+   */
+  setAccess(unit_id: string, mode: string): void;
   /** A second adapter over the same host state: what "the gateway restarted" means here. */
   restart(): HostAdapter;
 };
@@ -91,7 +97,7 @@ const doubleFixture = (scenario: Scenario = {}): Fixture => {
       ),
     plantForeign: (unit_id) =>
       void manifests.set(`/double/autostart/${unit_id}`, '{"someone":"else"}'),
-    widenAccess: (unit_id) => void manifest_modes.set(`/double/autostart/${unit_id}`, WIDE_ACCESS),
+    setAccess: (unit_id, mode) => void manifest_modes.set(`/double/autostart/${unit_id}`, mode),
     restart: build,
   };
 };
@@ -189,7 +195,8 @@ const darwinFixture = (scenario: Scenario = {}): Fixture => {
         `/Users/owner/Library/LaunchAgents/${unit}.plist`,
         '<plist><dict><key>Label</key><string>com.someone.else</string></dict></plist>',
       ),
-    widenAccess: (unit) => void modes.set(`/Users/owner/Library/LaunchAgents/${unit}.plist`, 0o644),
+    setAccess: (unit, mode) =>
+      void modes.set(`/Users/owner/Library/LaunchAgents/${unit}.plist`, Number.parseInt(mode, 8)),
     restart: () => createDarwinHostAdapter(env),
   };
 };
@@ -414,7 +421,7 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
     it('reports the posture it observed, so a wrong one is visible from status alone', async () => {
       const f = makeFixture();
       await installed(f);
-      f.widenAccess(unit);
+      f.setAccess(unit, WIDE_ACCESS);
       const status = await f.adapter.autostart_contract().status(unit);
       expect(status.manifest_access).toBe(WIDE_ACCESS);
       // Status OBSERVES. It reported the wide posture and left it exactly where it found it.
@@ -424,7 +431,7 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
     it('install narrows it even though the body is byte-identical and nothing was written', async () => {
       const f = makeFixture();
       const first = await installed(f);
-      f.widenAccess(unit);
+      f.setAccess(unit, WIDE_ACCESS);
       const again = await f.adapter.autostart_contract().install(plan(unit, f.root));
       // Unchanged bytes: this is the case the write path cannot reach, which is the whole point.
       expect(again.wrote).toBe(false);
@@ -436,7 +443,7 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
     it('repair narrows it, and never reports an empty action list while leaving it wide', async () => {
       const f = makeFixture();
       await installed(f);
-      f.widenAccess(unit);
+      f.setAccess(unit, WIDE_ACCESS);
       const repaired = await f.adapter.autostart_contract().repair(plan(unit, f.root));
       expect(repaired.actions_taken).toHaveLength(1);
       expect(repaired.actions_taken[0]).toMatch(/narrowed/);
@@ -447,7 +454,7 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
     it('is idempotent: a second pass finds nothing to narrow and says nothing', async () => {
       const f = makeFixture();
       await installed(f);
-      f.widenAccess(unit);
+      f.setAccess(unit, WIDE_ACCESS);
       await f.adapter.autostart_contract().repair(plan(unit, f.root));
       const second = await f.adapter.autostart_contract().repair(plan(unit, f.root));
       expect(second.actions_taken).toEqual([]);
@@ -459,12 +466,91 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
     it('survives the gateway restarting: the posture is on the host, not in the adapter', async () => {
       const f = makeFixture();
       await installed(f);
-      f.widenAccess(unit);
+      f.setAccess(unit, WIDE_ACCESS);
       const repaired = await f.restart().autostart_contract().repair(plan(unit, f.root));
       expect(repaired.actions_taken[0]).toMatch(/narrowed/);
       expect((await f.restart().autostart_contract().status(unit)).manifest_access).toBe(
         REQUIRED_ACCESS,
       );
+    });
+
+    /**
+     * THE DIRECTION, which is the half a fixture seeded only with `644` cannot see.
+     *
+     * Every assertion above passes against a host that simply forces the required posture onto
+     * whatever it finds. The double was exactly that host: it compared the stored posture to `600`
+     * for equality, so it took a manifest an owner had tightened to `400` up to `600` — adding the
+     * owner write bit — and reported `narrowed 400 to 600`. A false sentence in the one field this
+     * contract added so that `install` and `repair` would stop misreporting (invariant 1).
+     *
+     * Asserted here rather than only in the Darwin tests because it is a rule of the CONTRACT and
+     * not of a filesystem. The core suite running against the double is what proves the seam held
+     * (CLAUDE.md §4, Seam B); a direction that suite does not constrain is one the next adapter
+     * inherits backwards, since the double is the implementation it reads first.
+     */
+    describe('and never made wider: correcting a posture has a direction', () => {
+      /** Seeded posture, and the posture required afterwards — `null` meaning "left exactly as
+       * found". Nothing with an empty group-and-other half may be touched: each of those is a
+       * posture an owner could have chosen deliberately. The high bits are carried through the
+       * seeds because both hosts report them rather than rounding a mode down to three digits. */
+      const DIRECTIONS: [string, string | null][] = [
+        ['400', null],
+        ['500', null],
+        ['600', null],
+        ['700', null],
+        ['1600', null],
+        ['4600', null],
+        ['601', REQUIRED_ACCESS],
+        ['604', REQUIRED_ACCESS],
+        ['610', REQUIRED_ACCESS],
+        ['640', REQUIRED_ACCESS],
+        [WIDE_ACCESS, REQUIRED_ACCESS],
+        ['777', REQUIRED_ACCESS],
+        ['2644', REQUIRED_ACCESS],
+      ];
+
+      /** Bits set afterwards that were not set before. Zero is the entire rule, stated without
+       * naming a mode, so it binds the postures this table does not list as well. */
+      const granted = (before: string, after: string): number =>
+        Number.parseInt(after, 8) & ~Number.parseInt(before, 8);
+
+      it.each(DIRECTIONS)('install over %s', async (seeded, expected) => {
+        const f = makeFixture();
+        await installed(f);
+        f.setAccess(unit, seeded);
+        const again = await f.adapter.autostart_contract().install(plan(unit, f.root));
+        // Byte-identical body throughout: the posture is the only thing under test.
+        expect(again.wrote).toBe(false);
+        const after = again.status.manifest_access ?? '';
+        expect(after).toBe(expected ?? seeded);
+        // The sentence and the act agree: it reports a narrowing exactly when it performed one.
+        expect(again.restricted_access === null).toBe(expected === null);
+        expect(granted(seeded, after)).toBe(0);
+      });
+
+      it.each(DIRECTIONS)('repair over %s', async (seeded, expected) => {
+        const f = makeFixture();
+        await installed(f);
+        f.setAccess(unit, seeded);
+        const repaired = await f.adapter.autostart_contract().repair(plan(unit, f.root));
+        expect(repaired.actions_taken).toHaveLength(expected === null ? 0 : 1);
+        // Naming the posture it started from, so a host that narrowed the wrong file, or reported
+        // a `from` it did not read, cannot satisfy this by matching the word "narrowed".
+        if (expected !== null)
+          expect(repaired.actions_taken[0]).toContain(`from ${seeded} to ${REQUIRED_ACCESS}`);
+        const after = repaired.status.manifest_access ?? '';
+        expect(after).toBe(expected ?? seeded);
+        expect(granted(seeded, after)).toBe(0);
+      });
+
+      it('status observes a tightened posture too, and corrects neither direction', async () => {
+        const f = makeFixture();
+        await installed(f);
+        f.setAccess(unit, '400');
+        const autostart = f.adapter.autostart_contract();
+        expect((await autostart.status(unit)).manifest_access).toBe('400');
+        expect((await autostart.status(unit)).manifest_access).toBe('400');
+      });
     });
   });
 
