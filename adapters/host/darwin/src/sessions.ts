@@ -7,12 +7,14 @@
  * the provider conversation inside it resumed is Seam D's answer and a different durable event;
  * this module has no way to claim it, which is the intended shape.
  */
+import { refuseSessionCommand } from '@internal/host-contract';
 import type {
   HostSession,
   PathPolicy,
   SessionAttachment,
   SessionManager,
 } from '@internal/host-contract';
+import { GUARDED_BINARIES } from './env.js';
 import type { DarwinEnv } from './env.js';
 
 /** tmux reads `.` and `:` as address syntax; anything outside this set is refused, not escaped. */
@@ -85,6 +87,10 @@ export const createSessionManager = (env: DarwinEnv, paths: PathPolicy): Session
       if (!SESSION_NAME.test(spec.session_id)) {
         return Promise.resolve(refuse(`session id ${spec.session_id} is not addressable`));
       }
+      // Before the directory is even canonicalized: an unacceptable command makes the whole spec
+      // invalid, so a reattach must not quietly succeed on one either.
+      const unsafe = refuseSessionCommand(spec.command, GUARDED_BINARIES);
+      if (unsafe !== null) return Promise.resolve(refuse(`command refused: ${unsafe}`));
       const decision = paths.canonicalize(spec.working_directory);
       if (!decision.allowed) {
         return Promise.resolve(refuse(`working directory refused: ${decision.reason}`));
@@ -101,7 +107,14 @@ export const createSessionManager = (env: DarwinEnv, paths: PathPolicy): Session
         spec.session_id,
         '-c',
         decision.canonical,
-        ...(spec.command ?? []),
+        // `--` ends option parsing. Without it the backend reads a later `-c` as ITS OWN flag and
+        // the canonicalized directory two lines up is simply overridden -- the validation above
+        // refuses a command that *starts* with an option, and this refuses the backend the chance to
+        // find one anywhere else. Both, because one alone is a single point of failure on the
+        // property that keeps a session inside its allowed roots.
+        ...(spec.command === null || spec.command === undefined || spec.command.length === 0
+          ? []
+          : ['--', ...spec.command]),
       ]);
       if (created.error !== null || created.code !== 0) {
         return Promise.resolve(

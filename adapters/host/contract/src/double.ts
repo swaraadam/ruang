@@ -7,7 +7,7 @@
  * 'unknown'`, `confirmed_at: null` — because a double more confident than the thing it stands in
  * for tests the wrong contract.
  */
-import { createManifestAutostart, createPathPolicy } from './shared.js';
+import { createManifestAutostart, createPathPolicy, refuseSessionCommand } from './shared.js';
 import type {
   HealthProbe,
   HostAdapter,
@@ -118,6 +118,11 @@ export const createHostDouble = (options: HostDoubleOptions = {}): HostDouble =>
     session_manager: () => ({
       attach: (spec) => {
         if (!up) return refused('session backend unreachable');
+        // Before the live-session lookup, because an unacceptable command makes the whole spec
+        // invalid: a double that reattaches on a spec the real adapter refuses is a double that
+        // lets a core caller pass CI and diverge on the host.
+        const unsafe = refuseSessionCommand(spec.command, []);
+        if (unsafe !== null) return refused(`command refused: ${unsafe}`);
         const found = sessions.get(spec.session_id);
         if (found?.status === 'live') {
           const session = { ...found, last_verified_at: stamp() };

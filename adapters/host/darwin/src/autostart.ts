@@ -3,15 +3,71 @@
  * registration step. This module supplies the file, the path and the procedure; the refusal to
  * register — and therefore `registration: 'unknown'` — is `createManifestAutostart`'s.
  */
-import { createManifestAutostart } from '@internal/host-contract';
-import type { AutostartContract, AutostartPlan, OwnerProcedure } from '@internal/host-contract';
+import {
+  UnsafeAutostartPlanError,
+  UnsafeUnitIdError,
+  assertSafeUnitId,
+  createManifestAutostart,
+  refuseSessionCommand,
+} from '@internal/host-contract';
+import type {
+  AutostartContract,
+  AutostartPlan,
+  OwnerProcedure,
+  PathPolicy,
+} from '@internal/host-contract';
+import { GUARDED_BINARIES } from './env.js';
 import type { DarwinEnv } from './env.js';
 
 const xml = (v: string): string =>
   v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-export const manifestPath = (env: DarwinEnv, unit_id: string): string =>
-  `${env.home}/Library/LaunchAgents/${unit_id}.plist`;
+export const launchAgentsRoot = (env: DarwinEnv): string => `${env.home}/Library/LaunchAgents`;
+
+export const manifestPath = (env: DarwinEnv, unit_id: string): string => {
+  assertSafeUnitId(unit_id);
+  const root = launchAgentsRoot(env);
+  const path = `${root}/${unit_id}.plist`;
+  // Cannot fire while the id is a bare identifier -- which is the point of asserting it first. It is
+  // here because the id and the path are composed in two different places, and a later caller that
+  // composes its own must not get a quieter failure than this one.
+  if (!path.startsWith(`${root}/`) || path.includes('/..')) {
+    throw new UnsafeUnitIdError(`refusing a manifest path outside ${root}: ${path}`);
+  }
+  return path;
+};
+
+/**
+ * The plan is a PERSISTENCE PAYLOAD, so every field in it is a thing the machine will do at login.
+ *
+ * The launcher half of the `program` rule is in the shared contract, so the double enforces it too.
+ * This adds the half only this host knows: the owner-run deny-list. A LaunchAgent whose program is
+ * `sudo` is the foothold that list exists to refuse, and it is worse here than in a session because
+ * it survives a reboot and `ownerProcedure` hands the owner a paste-ready line for it.
+ *
+ * Root containment is deliberately NOT applied to `program`: a real binary lives outside the
+ * workspace roots, so requiring one would only teach callers to widen the roots. The two
+ * directories are ordinary paths and do get it.
+ */
+const assertPlanIsInstallable = (paths: PathPolicy, plan: AutostartPlan): void => {
+  const unsafe = refuseSessionCommand(plan.program, GUARDED_BINARIES);
+  if (unsafe !== null) {
+    throw new UnsafeAutostartPlanError(
+      `refusing to write an autostart manifest: program ${unsafe}`,
+    );
+  }
+  for (const [field, candidate] of [
+    ['working_directory', plan.working_directory],
+    ['log_directory', plan.log_directory],
+  ] as const) {
+    const decision = paths.canonicalize(candidate);
+    if (!decision.allowed) {
+      throw new UnsafeAutostartPlanError(
+        `refusing to write an autostart manifest: ${field} ${decision.reason} (${decision.detail})`,
+      );
+    }
+  }
+};
 
 export const renderManifest = (plan: AutostartPlan): string =>
   `<?xml version="1.0" encoding="UTF-8"?>
@@ -44,8 +100,15 @@ ${Object.entries(plan.environment)
 </plist>
 `;
 
-/** Display data: verbatim lines the owner reads and may paste. Nothing here executes them, and
- * `GUARDED_BINARIES` makes that structural rather than a matter of trust. */
+/**
+ * Display data: verbatim lines the owner reads and may paste. Nothing here executes them.
+ *
+ * That the adapter does not RUN these is structural — `guard` throws at the one launch site. That
+ * the lines are SAFE TO PASTE is a different claim and rests on the checks above: the unit id is a
+ * bare identifier, so the path is inside LaunchAgents, and the program is not a launcher. An earlier
+ * version of this comment offered `GUARDED_BINARIES` as though it covered the second claim. It does
+ * not, and could not: nothing is spawned on this path at all.
+ */
 export const ownerProcedure = (env: DarwinEnv, unit_id: string): OwnerProcedure => {
   const path = manifestPath(env, unit_id);
   const target = `gui/${env.user_id === null ? '<your-uid>' : String(env.user_id)}`;
@@ -70,10 +133,15 @@ export const ownerProcedure = (env: DarwinEnv, unit_id: string): OwnerProcedure 
   };
 };
 
-export const createAutostartContract = (env: DarwinEnv): AutostartContract =>
+export const createAutostartContract = (env: DarwinEnv, paths: PathPolicy): AutostartContract =>
   createManifestAutostart({
     pathFor: (unit_id) => manifestPath(env, unit_id),
-    render: renderManifest,
+    // Both `install` and `repair` render before they write, so validating here covers every path
+    // that puts a plan on disk without duplicating the check at each call site.
+    render: (plan) => {
+      assertPlanIsInstallable(paths, plan);
+      return renderManifest(plan);
+    },
     procedureFor: (unit_id) => ownerProcedure(env, unit_id),
     read: (path) => {
       try {

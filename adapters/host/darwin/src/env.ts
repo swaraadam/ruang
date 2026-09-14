@@ -3,8 +3,17 @@
  *
  * Two reasons it is a parameter and not a set of imports. It lets the contract suite drive the
  * real adapter on any platform against a scripted host — a stronger proof than skipping half the
- * suite off-Darwin. And it puts every process launch behind one function, which is what makes
- * `GUARDED_BINARIES` an enforceable promise rather than a claim about code nobody re-reads.
+ * suite off-Darwin. And it puts every process launch behind one function, so `GUARDED_BINARIES` is
+ * checked in one place rather than remembered in several.
+ *
+ * BE PRECISE ABOUT WHAT THAT BUYS. This function inspects the BASENAME OF argv[0] and nothing else.
+ * It catches an agent that adds a direct `launchctl load` line, which is the realistic accident and
+ * is worth catching. It is not a sandbox: the choke point necessarily passes `tmux` and `osascript`
+ * — a process launcher and a script interpreter — so anything reached one indirection down was never
+ * in its view. `refuseSessionCommand` closes the one-step laundering through a session command
+ * (`sh -c 'launchctl …'`, which `guard` saw only as `tmux`); an interpreter that can open a socket
+ * is still outside what any argv check can reach. An earlier version of this comment called the
+ * deny-list "an enforceable promise", which is the kind of sentence that stops people looking.
  */
 import { spawnSync } from 'node:child_process';
 import {

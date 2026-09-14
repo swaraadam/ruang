@@ -35,7 +35,7 @@ export const createDarwinHostAdapter = (env: DarwinEnv = defaultDarwinEnv()): Ho
     caseInsensitive: true,
   });
   const sessions = createSessionManager(env, paths);
-  const autostart = createAutostartContract(env);
+  const autostart = createAutostartContract(env, paths);
 
   return {
     capabilities: () => Promise.resolve(DARWIN_CAPABILITIES),
