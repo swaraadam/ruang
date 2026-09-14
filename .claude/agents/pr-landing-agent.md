@@ -63,6 +63,30 @@ Merge **only** when every one of these holds. Any single failure means `request-
 3. **`security-reviewer` has approved**, if the change touches apply, approvals, credentials, auth,
    budgets, the credential broker, WebAuthn, reversibility classification, or egress. When in doubt
    it touches them.
+
+   **3a. The security review must have EXECUTED the code, not only read it**, whenever the change
+   touches a seam that takes caller-supplied input — a path, an identifier, an argv, or network
+   input. A review that says it reasoned statically does not satisfy condition 3 for such a change;
+   send it back to be run.
+
+   This is not a preference. On 2026-09-14, three PRs carried a valid SHA-bound
+   `claude-review: pass` and were each then blocked by a reviewer that ran the code:
+
+   | PR | CI verdict | executed review | criticals |
+   |---|---|---|---|
+   | #72 (host seam) | `pass` | BLOCKED | 2 |
+   | #74 (apply over git) | `pass` | BLOCKED | 4 |
+   | #84 (gateway) | `pass` | BLOCKED | 1 + 6 major |
+
+   **Seven criticals after a pass, across three PRs, in one night.** Every one was reproduced by
+   running an attack; none was visible to a reviewer that read the diff. The defects clustered where
+   a comment asserted a property the code did not keep — which is precisely the case a reader cannot
+   catch, because it reads the claim and the code together and the claim is the wrong one. See #86.
+
+   **A read-only verdict must state its own limitation.** `pass` asserts more than a reviewer who did
+   not run the code can know. Such a verdict says *"reads as fine to a reviewer who did not run it"*
+   — never `pass`. If a review's own "what I could not verify" section says it did not execute, treat
+   its verdict as that weaker claim regardless of the word it used.
 4. **The change set is within budget** — the issue's `change_budget`, else 1250. Count authored
    lines; a generated lockfile is not review burden. Or the owner
    recorded an explicit waiver on the issue. A waiver must be *on the issue*, from the owner, with a
@@ -122,6 +146,26 @@ CI proves the suite passed. It does not prove the suite is meaningful. Before me
 
 ## On merging
 
+**Before you merge, check for PRs stacked on this branch:**
+
+```sh
+gh pr list --repo <repo> --base <head-branch> --state open
+```
+
+If any exist, **retarget them to `main` first** (`gh pr edit <n> --base main`) or merge without
+`--delete-branch`. Deleting a branch auto-closes every open PR based on it, and the closure is
+**unrecoverable**: once the base ref is gone, both `gh pr reopen` and `gh pr edit --base main`
+refuse, so the work needs a rebase and a brand-new PR, which also discards its review marker.
+
+This happened twice in one hour on 2026-09-14 — #81 (base `d-01-part1`) died when #80 merged, and
+#82 (base `d-01-part2`) died when #83 merged, one second after the merge. Both were green and
+landable; #82 was that night's floor deliverable. See #85. The check above is one call and prevents
+both.
+
+Note also that `main` merges are **squash** merges, so after a base lands, a stacked branch's copies
+of those commits are not ancestors of `main` and will conflict with the squashed version. Recovery
+is `git rebase --onto origin/main <last-base-commit>`, not a retarget alone.
+
 ```sh
 gh pr merge <n> --repo <repo> --squash --delete-branch
 ```
@@ -132,7 +176,7 @@ Squash, always: one issue, one revertible commit on `main`. Then:
    change.
 2. Close the issue if the PR did not auto-close it, and remove `in-progress` /
    `awaiting-owner-apply`.
-3. Confirm the branch is deleted.
+3. Confirm the branch is deleted, and that deleting it closed no PR that was not this one.
 4. **Run `scripts/sandbox.sh inspect <ISSUE-ID>` before any teardown.** Never destroy a dirty
    sandbox — a merged PR does not mean the sandbox is clean.
 5. Return control to the orchestrator with: the squash SHA, the issue number, and which issues the
