@@ -203,7 +203,12 @@ issues:
     phase: 0
     agent: spine-engineer
     size: L
-    depends_on: [P0-05, P0-07]
+    # P0-07 removed 2026-09-14 by the owner: the snapshot endpoint and the durable event stream read
+    # SQLite rows and durable events and need nothing from the host seam. PR #84 was built and proved
+    # end to end against a HostAdapter that had not landed. The host-seam dependency belongs to
+    # terminal attach, which already carries it as P1-03 -> P0-08 -> P0-07. A depends_on edge that
+    # nothing uses blocks ready work for no reason -- it is what kept the floor off next-ready.py.
+    depends_on: [P0-05]
     refs: "4.1, 15.1, 15.2"
     goal: One local gateway, one authority, typed operations only.
     scope:
@@ -223,7 +228,10 @@ issues:
     phase: 0
     agent: code-adapter-engineer
     size: L
-    depends_on: [P0-04]
+    # P0-20 added 2026-09-14 by the owner: the security review's C3/C4 on PR #74 are not adapter
+    # patches -- the ApplyPlan shape cannot carry what invariant 5 requires. Split to P0-20; C1/C2
+    # stay here.
+    depends_on: [P0-04, P0-20]
     change_budget: 1400
     budget_reason: "the full 13-method SPI over a real source of record: thirteen implementations, each small"
     refs: "5.3, 5.2.3, 13.2"
@@ -401,6 +409,53 @@ issues:
       - "every attention item is reconstructable from durable truth after a restart (test)"
       - "no attention watcher consumes model tokens to observe time passing"
 
+  - id: P0-20
+    title: "ApplyPlan must identify what it applies: apply_plan_hash and real basis.inputs"
+    phase: 0
+    agent: protocol-engineer
+    size: M
+    depends_on: [P0-04, P0-05]
+    change_budget: 600
+    budget_reason: |
+      Authored 2026-09-14 by the owner, split out of P0-10 after the security review of PR #74.
+      A closed-union change plus a PROTOCOL_VERSION bump and a renderer case, with contract tests
+      that pin discrimination rather than field presence.
+    refs: "12.1, 16.2, 20.1"
+    goal: |
+      An ApplyPlan that cannot say what it applies cannot bind an approval to an action.
+
+      Proven against the real exported surface at 73ad44b56, not inferred: integrate() and publish()
+      take only CodeAdapterOptions, the change_set is read for change_size and discarded, and
+      basis.inputs is hard-coded []. A README typo fix and an 1800-line rewrite of
+      packages/policy/src/capability.ts produce byte-identical operations and target_refs. The
+      approval table binds on (action_fingerprint, target_ref, apply_plan_hash) -- all three
+      non-discriminating, and no apply_plan_hash exists on the plan at all. A step-up assertion
+      obtained for a trivial change is therefore replayable against a dangerous one.
+
+      That is invariant 5 failing open. The reversal is the same defect from the other side: the
+      ReversalPlan reuses the forward constructors, so executing the reversal of a publish publishes
+      again, while apply.ts:46-47 claims compensable means "a new forward action".
+
+      Pair with M-18 (#78). They are one defect from two directions -- an authorization that does not
+      bind to the action it authorizes -- and deciding them apart risks two mechanisms that never meet.
+    scope:
+      - "apply_plan_hash on ApplyPlan that actually discriminates; write down what it covers and why"
+      - "basis.inputs carries the real resource/version pairs, so the staleness gate can fire"
+      - "a ReversalPlan is distinguishable from the forward plan it reverses, or the reversibility class is renamed honestly"
+      - "PROTOCOL_VERSION bump, closed union updated, renderer case added (CLAUDE.md section 10)"
+      - "check against #78 that a step-up assertion cannot be replayed across two different applies"
+    # Mirrors issue #89's acceptance verbatim, with markdown formatting stripped -- this file
+    # is the source of truth for scope (backlog.yaml header, CLAUDE.md section 7.1) and must not
+    # drift from the issue generated out of it.
+    acceptance:
+      - "two ApplyPlans over materially different change sets produce different apply_plan_hash; the same change set reproduces the same one"
+      - "basis.inputs is populated from the real basis, and a stale input makes the plan non-fresh"
+      - "a ReversalPlan cannot be mistaken for, or executed as, the forward action it reverses"
+      - "PROTOCOL_VERSION bumped, closed union updated, renderer case added"
+      - "an approval bound to (action_fingerprint, target_ref, apply_plan_hash) cannot be replayed against a different apply -- tested, not asserted"
+      - "contract tests live in tests/contract/ as *.contract.test.ts and pin discrimination rather than field presence"
+      - "the C4 claim at apply.ts:46-47 is either made true by the code or corrected"
+      - "the kindOf claim at apply.ts:95 is decided together with it, not left standing untracked"
   - id: P0-19
     title: "Phase 0 exit gate: run gate-check and record the evidence"
     phase: 0
