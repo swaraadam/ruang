@@ -124,6 +124,14 @@ issues:
     size: M
     depends_on: [P0-05]
     change_budget: 900
+    budget_waiver: |
+      Owner, 2026-09-14, on issue #6 (blueprint 16.2 -- only the owner may waive, and the waiver is
+      durable evidence). The 900-line budget is waived for this issue, for PR #70 at head 6c312433f,
+      ~2210 authored lines excluding pnpm-lock.yaml. Reason: 900 under-costed the configuration front
+      door -- config.ts (295) and load.ts (285) are load-time validation of a versioned data format,
+      not policy logic, and were not in view when the number was set. The author measured the overage,
+      offered a four-way re-cut, declined to shrink fail-closed mechanics to fit a line count, and
+      applied needs-owner rather than proceeding.
     budget_reason: "a capability matrix is one repeating declarative row per capability; the logic is small"
     refs: "7.1, 7.2, 7.3"
     goal: Authorization as data, correct on day one with exactly one human owner.
@@ -145,6 +153,13 @@ issues:
     size: L
     depends_on: [P0-04]
     change_budget: 1100
+    budget_waiver: |
+      Owner, 2026-09-14, on issue #7 (blueprint 16.2 -- only the owner may waive, and the waiver is
+      durable evidence). The 1100-line budget is waived for this issue, for PR #72 at head d56eacb3e,
+      1748 authored lines. Reason: the overage is the adapters/host/contract package plus a
+      parameterized suite running the same cases against the test double and a scripted Darwin host.
+      Splitting it would land a seam whose two implementations are not yet proven to agree, which is
+      the property the suite exists to establish. Does not waive the two A3 items recorded on the issue.
     budget_reason: "a host adapter plus a test double is two implementations of one interface by definition"
     refs: "06, Appendix B.3"
     goal: All host specifics behind a narrow surface, provably not leaking.
