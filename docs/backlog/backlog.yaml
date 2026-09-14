@@ -447,6 +447,10 @@ issues:
     # Mirrors issue #89's acceptance verbatim, with markdown formatting stripped -- this file
     # is the source of truth for scope (backlog.yaml header, CLAUDE.md section 7.1) and must not
     # drift from the issue generated out of it.
+    # Mirrors issue #89's acceptance verbatim, with markdown formatting stripped -- this file
+    # is the source of truth for scope (backlog.yaml header, CLAUDE.md section 7.1) and must not
+    # drift from the issue generated out of it. The last two are cited by quoted text rather than
+    # line number: the lines they named moved while PR #74 was still being fixed.
     acceptance:
       - "two ApplyPlans over materially different change sets produce different apply_plan_hash; the same change set reproduces the same one"
       - "basis.inputs is populated from the real basis, and a stale input makes the plan non-fresh"
@@ -454,8 +458,8 @@ issues:
       - "PROTOCOL_VERSION bumped, closed union updated, renderer case added"
       - "an approval bound to (action_fingerprint, target_ref, apply_plan_hash) cannot be replayed against a different apply -- tested, not asserted"
       - "contract tests live in tests/contract/ as *.contract.test.ts and pin discrimination rather than field presence"
-      - "the C4 claim at apply.ts:46-47 is either made true by the code or corrected"
-      - "the kindOf claim at apply.ts:95 is decided together with it, not left standing untracked"
+      - "the compensable claim -- \"undoing a publish needs a new forward action instead, which is what compensable means\" -- is either made true by the code or corrected"
+      - "the reversal-kind claim -- \"an operation whose kind cannot be read is not_reversible with a reason\" -- is decided together with it, not left standing untracked"
   - id: P0-19
     title: "Phase 0 exit gate: run gate-check and record the evidence"
     phase: 0
