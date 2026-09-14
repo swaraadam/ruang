@@ -11,7 +11,7 @@
  * neither is `fresh`. Both are representable, and `fresh` is never a default.
  */
 import type { Db, StoredEvent } from '@internal/persistence';
-import { latestSeq, readSince } from '@internal/persistence';
+import { eventLogIsWhole, latestSeq, readSince } from '@internal/persistence';
 
 /** Never `fresh` by omission: `null` means no assessment is on the record at all. */
 export type BasisStaleness = 'fresh' | 'stale' | 'unknown' | null;
@@ -119,9 +119,13 @@ const dispatchedTasks = (events: readonly StoredEvent[]): ReadonlySet<string> =>
  */
 export const officeSnapshot = (db: Db, owner_id: string): OfficeSnapshot => {
   const seq = latestSeq(db, owner_id);
-  // A hole in history is not a smaller history. `readSince` answers null rather than a partial page,
-  // and a snapshot built on a partial replay would be a confident-looking lie.
-  const history = readSince(db, owner_id, 0, seq);
+  // A hole in history is not a smaller history, and a snapshot built on a partial replay would be a
+  // confident-looking lie. The question is asked through `eventLogIsWhole` rather than inferred from
+  // this particular read, because the event stream must refuse the same database for the same
+  // reason: two doors onto one log, one rule. (`readSince` still answers null on a hole, and the
+  // check below stays as the second half of that belt -- but it is no longer the only half, which
+  // is what let the stream serve a log this route had already refused.)
+  const history = eventLogIsWhole(db, owner_id) ? readSince(db, owner_id, 0, seq) : null;
   if (history === null) {
     throw new IncompleteHistoryError(
       `refusing to build a snapshot for '${owner_id}': the event log is not contiguous up to ${String(seq)}`,

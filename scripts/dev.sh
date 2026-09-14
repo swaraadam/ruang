@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # `pnpm dev` — bring up the local control plane for development.
 #
-# This script exists to answer one question the gateway is not allowed to answer for itself: WHICH
-# DATABASE. `apps/gateway` does not know the repository root and must not spell product filenames
-# (CLAUDE.md §1 — naming clearance is an open Phase -1 gate), so it refuses to start without an
-# absolute `SEED_DB_PATH`. This script knows the root (it cd's there) and reads the filename from
-# the one source: `DEV_DB_PATH`, exported by the same `scripts/seed.ts` that `pnpm seed` runs, which
-# gets it from `config/naming.ts`. One definition, two readers, no second spelling.
+# This script exists to answer the two questions the gateway is not allowed to answer for itself:
+# WHICH DATABASE, and WHICH CANONICAL ORIGIN. `apps/gateway` does not know the repository root and
+# must not spell product identifiers (CLAUDE.md §1 — naming clearance is an open Phase -1 gate), so
+# it refuses to start without an absolute `SEED_DB_PATH` and without `CANONICAL_ORIGIN`. This script
+# knows the root (it cd's there) and reads both from the one source: `DEV_DB_PATH`, exported by the
+# same `scripts/seed.ts` that `pnpm seed` runs, and `CANONICAL_ORIGIN` from `config/naming.ts`
+# itself. One definition, two readers, no second spelling.
 #
 # It also refuses rather than guesses: no build, no database, no server.
 set -uo pipefail
@@ -57,6 +58,20 @@ if [[ $PRINT_ONLY -eq 1 ]]; then
   echo "$DB_PATH"
   exit 0
 fi
+
+# Same discipline for the canonical origin: the gateway refuses to start without one and must not
+# spell a hostname itself (CLAUDE.md §1). `config/naming.ts` is the single source; this reads the
+# compiled artefact of that one file, the way it reads DEV_DB_PATH from the compiled seed.
+if [[ -z "${CANONICAL_ORIGIN:-}" ]]; then
+  CANONICAL_ORIGIN="$(node -e \
+    "import('./dist/config/naming.js').then(m=>process.stdout.write(m.CANONICAL_ORIGIN))")"
+  if [[ -z "$CANONICAL_ORIGIN" ]]; then
+    echo "pnpm dev could not read CANONICAL_ORIGIN from dist/config/naming.js." >&2
+    echo "That export is the only place the canonical origin is defined; refusing to invent one." >&2
+    exit 1
+  fi
+fi
+export CANONICAL_ORIGIN
 
 # Say it plainly. Without this the first sign of an unseeded machine is a better-sqlite3 TypeError
 # from inside a dependency, and the gateway's own refusal (correct, but less specific) after that.

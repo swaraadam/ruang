@@ -118,6 +118,27 @@ export const latestSeq = (db: Db, ownerId: string): number =>
   ).s;
 
 /**
+ * Whether this owner's log is whole: every sequence from 1 to the latest, with no hole anywhere.
+ *
+ * **This is the same rule `readSince` enforces, asked about the log instead of about a range.**
+ * `readSince` checks `rows[i].seq === afterSeq + 1 + i`, which is contiguity RELATIVE TO THE
+ * CALLER'S RESUME POINT: a client that asks for the sequence after a hole gets a run that is
+ * perfectly contiguous from where it asked, and cannot see what is missing behind it. Asking that
+ * question is how a reader bypassed a refusal the other reader had already made about the same
+ * database. A hole is a property of the log, so the question has to be asked of the log.
+ *
+ * Counting is enough: `seq` values are distinct per owner (v1's `PRIMARY KEY (owner_id, seq)`) and
+ * allocated from 1, so `COUNT(*) = MAX(seq)` can only hold when every value in between is present.
+ * It reads the index, not the rows.
+ */
+export const eventLogIsWhole = (db: Db, ownerId: string): boolean => {
+  const row = db
+    .prepare(`SELECT COUNT(*) AS n, COALESCE(MAX(seq), 0) AS m FROM event WHERE owner_id = ?`)
+    .get(ownerId) as { n: number; m: number };
+  return row.n === row.m;
+};
+
+/**
  * Events after `afterSeq`, in order, up to `limit`.
  *
  * **Returns a contiguous run or nothing.** §15.2: "If sequence recovery is incomplete, fetch a

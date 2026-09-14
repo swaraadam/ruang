@@ -22,5 +22,14 @@ export const PLACEHOLDER = {
   dbFile: 'control-plane.sqlite',
 } as const;
 
+/**
+ * The one canonical browser origin (blueprint §4.2, §1157) — the only origin the gateway serves.
+ *
+ * Derived, not typed out again: the hostname is spelled once, above, so clearance stays a one-file
+ * change. Nothing here registers anything; `.invalid` resolves nowhere by definition (RFC 6761),
+ * which is the point while the naming gate is open.
+ */
+export const CANONICAL_ORIGIN = `https://${PLACEHOLDER.hostname}`;
+
 /** Core entity vocabulary. `Project` is the entity; "workspace" is copy, never a type. */
 export const CORE_ENTITY = 'Project' as const;
