@@ -451,6 +451,7 @@ issues:
       - "an approval bound to (action_fingerprint, target_ref, apply_plan_hash) cannot be replayed against a different apply -- tested, not asserted"
       - "PROTOCOL_VERSION bumped and a renderer case exists for the changed shape"
       - "the compensable claim at apply.ts:46-47 is either made true by the code or corrected"
+      - "the kindOf claim at apply.ts:95 is decided together with it, not left standing untracked"
 
   - id: P0-19
     title: "Phase 0 exit gate: run gate-check and record the evidence"
