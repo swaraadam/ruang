@@ -10,5 +10,18 @@
       "types": "./dist/src/index.d.ts",
       "default": "./dist/src/index.js"
     }
+  },
+  "dependencies": {
+    "@fastify/static": "^10.1.3",
+    "@fastify/websocket": "^11.3.0",
+    "fastify": "^5.12.4",
+    "@internal/persistence": "workspace:*",
+    "@internal/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  },
+  "scripts": {
+    "start": "node -e \"import('./dist/src/index.js').then(m=>m.start())\""
   }
 }
