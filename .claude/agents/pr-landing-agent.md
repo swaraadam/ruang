@@ -166,6 +166,12 @@ Note also that `main` merges are **squash** merges, so after a base lands, a sta
 of those commits are not ancestors of `main` and will conflict with the squashed version. Recovery
 is `git rebase --onto origin/main <last-base-commit>`, not a retarget alone.
 
+**That rebase changes the head SHA, which voids the PR's `claude-review: pass` marker** — condition 2
+binds the marker to a commit, and the rebased commit is a different one. So a recovered PR needs a
+fresh review before it can land; the old verdict judged bytes that are no longer at the head. That is
+the SHA binding working, not an obstacle to route around, and it is the reason preventing the orphan
+is cheaper than recovering from it: the delete costs a rebase, a new PR *and* a new review.
+
 ```sh
 gh pr merge <n> --repo <repo> --squash --delete-branch
 ```
