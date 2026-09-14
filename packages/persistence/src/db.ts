@@ -1,7 +1,8 @@
 /**
  * Opening the control-plane database — blueprint §14.3, §19.1 ("SQLite + WAL").
  *
- * Three pragmas are not defaults and all three are load-bearing:
+ * Three pragmas are not defaults and all three are load-bearing. They are spelled once, in
+ * `applyPragmas` below, and every file-backed open goes through it:
  *
  * - **WAL.** A reader never blocks the writer, which is what lets the office view read a snapshot
  *   while a task is mid-write. It is also per-database and persists, so setting it once is enough.
@@ -16,6 +17,20 @@ import { LATEST_VERSION, currentVersion, migrate, schemaFingerprint } from './mi
 export type Db = Database.Database;
 
 /**
+ * The three non-default pragmas from the note above, applied to every file-backed handle.
+ *
+ * One definition, not one per open path. The list is short enough to copy, which is exactly the
+ * hazard: a second copy is a second thing to remember when one of the three changes, and the header
+ * comment above would then describe neither. `openMemoryDatabase` is the stated exception and sets
+ * only `foreign_keys` — see the note there for why the other two say nothing in memory.
+ */
+const applyPragmas = (db: Db): void => {
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
+};
+
+/**
  * Open (or CREATE) the database, apply pending migrations, and return it ready to use.
  *
  * This is the writer's path — the seed, and anything else whose job is to bring a database into
@@ -25,14 +40,18 @@ export type Db = Database.Database;
  */
 export const openDatabase = (path: string): Db => {
   const db = new Database(path);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
+  applyPragmas(db);
   migrate(db);
   return db;
 };
 
-/** An in-memory database at the latest version. For tests; WAL is meaningless without a file. */
+/**
+ * An in-memory database at the latest version. For tests.
+ *
+ * `foreign_keys` only, and deliberately not `applyPragmas`: a journal mode is meaningless without a
+ * file and `busy_timeout` cannot fire on a handle no other connection can reach. Setting them here
+ * would suggest this path had the same reasons behind it as the file paths, and it does not.
+ */
 export const openMemoryDatabase = (): Db => {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
@@ -146,9 +165,7 @@ export const openControlPlaneDatabase = (path: string): Db => {
 
   // Past the refusal, so these are writes to a proved control-plane database. Same handle
   // throughout: see the note above on why the second open was the hole.
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
+  applyPragmas(db);
   migrate(db);
   return db;
 };
