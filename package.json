@@ -12,9 +12,13 @@
     "test": "vitest run",
     "audit": "./scripts/audit-seams.sh && ./scripts/audit-identity.sh",
     "ready": "python3 scripts/next-ready.py",
-    "gate": "./scripts/gate-check.sh"
+    "gate": "./scripts/gate-check.sh",
+    "seed": "tsc -b tsconfig.scripts.json && node dist/scripts/seed.js",
+    "dev": "./scripts/dev.sh"
   },
   "devDependencies": {
+    "@internal/persistence": "workspace:*",
+    "@internal/protocol": "workspace:*",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.20.1",
     "eslint": "^10.10.0",
