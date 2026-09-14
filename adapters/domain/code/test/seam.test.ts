@@ -105,6 +105,15 @@ describe('the process runner cannot grow a mutating verb', () => {
       await expect(runGit(process.cwd(), [subcommand])).rejects.toThrow(/allow-list/);
     },
   );
+
+  // The sandbox lifecycle is the one permitted subcommand with verbs of its own, so permitting it
+  // by name alone permitted all of them -- including three the package never uses.
+  it.each(['lock', 'move', 'repair'])(
+    'refuses the %s verb of a permitted subcommand',
+    async (v) => {
+      await expect(runGit(process.cwd(), ['worktree', v])).rejects.toThrow(/allow-list/);
+    },
+  );
 });
 
 describe('patch range headers become the anchors they claim to be (§5.2.1)', () => {

@@ -6,7 +6,8 @@
  * and gate condition 0.4 cannot see anything under `adapters/`.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+// prettier-ignore
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCodeAdapter } from '@internal/adapter-domain-code';
@@ -22,6 +23,9 @@ const CONSULTED = 'architecture.md';
 /** Committed, and not text: the class of change a patch renders as "differ" rather than as content. */
 const OPAQUE = 'diagram.opaque';
 const OPAQUE_BASELINE = Uint8Array.from([0x00, 0x01, 0x02, 0xff, 0x00, 0xfe]);
+/** Committed, non-text, and named so that git has to quote it: a name is a hostile input too. */
+const QUOTED = 'awkward\nname.opaque';
+const QUOTED_BASELINE = Uint8Array.from([0x00, 0x10, 0x20, 0xfd]);
 const UNCONSULTED = 'gotchas.md';
 const PROJECT = 'project-under-contract';
 const CAPTURED_AT = '2026-09-13T00:00:00.000Z';
@@ -36,6 +40,7 @@ export const codeHarness: ContractHarness = {
     writeFileSync(join(source, CONSULTED), 'one\ntwo\nthree\n');
     writeFileSync(join(source, UNCONSULTED), 'unrelated\n');
     writeFileSync(join(source, OPAQUE), OPAQUE_BASELINE);
+    writeFileSync(join(source, QUOTED), QUOTED_BASELINE);
     git(source, ['add', '-A']);
     const identity = ['user.name=fixture', 'user.email=f@example.invalid', 'commit.gpgsign=false'];
     git(source, [...identity.flatMap((c) => ['-c', c]), 'commit', '-q', '-m', 'baseline']);
@@ -93,11 +98,35 @@ export const codeHarness: ContractHarness = {
         // Committed and non-text: the diff reports that it differs, never how.
         const revised = Uint8Array.from([0x00, 0x01, 0x02, 0xff, 0x00, 0xfe, 0xab, 0xcd]);
         writeFileSync(join(at, OPAQUE), revised);
+        // The same, under a name the substrate cannot print literally. A rescue that reads its own
+        // listing back as a name that is not on disk skips this one and still reports it retained.
+        const quoted = Uint8Array.from([0x00, 0x10, 0x20, 0xfd, 0x0b, 0x0c]);
+        writeFileSync(join(at, QUOTED), quoted);
         return [
           { label: 'a resource the source of record has never seen', bytes: invented },
           { label: 'non-text bytes in a nested location', bytes: nested },
           { label: 'a revised non-text resource the record knows', bytes: revised },
+          { label: 'a revised non-text resource whose name has to be quoted', bytes: quoted },
         ];
+      },
+      leaveReferenceToOutsideWork: (sandbox: Sandbox) => {
+        const outside = join(root, 'not-the-sandbox');
+        mkdirSync(outside, { recursive: true });
+        const referent = Buffer.from('bytes that were never this sandbox to give away\n');
+        writeFileSync(join(outside, 'held-elsewhere.bin'), referent);
+        symlinkSync(join(outside, 'held-elsewhere.bin'), join(inSandbox(sandbox), 'pointer.txt'));
+        return [{ label: 'a reference out of the sandbox', resource_id: 'pointer.txt', referent }];
+      },
+      forgedSandbox: () => {
+        // Beside both roots, so an id of `..` reaches it from either once a path is derived.
+        const untouchable = join(root, 'untouchable');
+        mkdirSync(untouchable, { recursive: true });
+        writeFileSync(join(untouchable, 'the-only-copy.txt'), 'not this adapter to delete\n');
+        const basis: Basis = { ref: '0'.repeat(40), inputs: [], captured_at: CAPTURED_AT };
+        return {
+          sandbox: { sandbox_id: '../untouchable', project_id: PROJECT, basis },
+          untouchable: [untouchable],
+        };
       },
       unresolvableBasis: (): Basis => ({
         ref: '0'.repeat(40),

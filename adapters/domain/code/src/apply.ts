@@ -9,6 +9,7 @@ import type { ApplyOperation, ApplyPlan, ApplyPolicy, ApplyResult, BrokerOutcome
 import type { ChangeSet } from '@internal/protocol';
 import { existsSync } from 'node:fs';
 import { currentRef, UNRESOLVED_REF } from './basis.js';
+import { isPathSafeId } from './paths.js';
 import { sandboxPath } from './sandbox.js';
 import { AdapterRefusal, type CodeAdapterOptions } from './surface.js';
 
@@ -125,8 +126,14 @@ export const reconcile = async (
 
   for (const [key, believed] of Object.entries(known_state)) {
     if (key.startsWith('sandbox:')) {
-      const there = existsSync(sandboxPath(o, key.slice('sandbox:'.length)));
-      observed[key] = there ? 'present' : 'absent';
+      const id = key.slice('sandbox:'.length);
+      // An id this adapter could not have issued locates nothing, so its state is not observable
+      // rather than `absent`. Invariant 3: a probe, not a guess, and no path derived from it.
+      if (!isPathSafeId(id)) {
+        probes.push(`probe:${key}`);
+        continue;
+      }
+      observed[key] = existsSync(sandboxPath(o, id)) ? 'present' : 'absent';
     } else if (!(key in observed)) {
       probes.push(`probe:${key}`);
       continue;

@@ -4,19 +4,36 @@
  * longer find would be one whose dirty work it silently assumes away — invariant 7 says one
  * authoritative home per fact, and the filesystem is that home for this one.
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+// prettier-ignore
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 // prettier-ignore
 import type { Basis, ClosePolicy, SafetyRecord, Sandbox, SandboxInspection } from '@internal/domain';
 import { basisStaleness } from './basis.js';
+import { isPathSafeId, under } from './paths.js';
 import { runGit } from './process.js';
 import { AdapterRefusal, type CodeAdapterOptions } from './surface.js';
 
+/**
+ * Every path in this module is derived from an id the caller chose, and one of them is handed to a
+ * recursive delete. An id this adapter could not have issued therefore locates *nothing*: refused
+ * at the derivation, once, so no call site can forget it.
+ */
+const locate = (root: string, sandbox_id: string): string => {
+  const full = isPathSafeId(sandbox_id) ? under(root, sandbox_id) : null;
+  if (full === null)
+    throw new AdapterRefusal(
+      'unsafe_identifier',
+      'this sandbox identifier is not one this adapter could have issued, so it locates nothing',
+    );
+  return full;
+};
+
 export const sandboxPath = (o: CodeAdapterOptions, sandbox_id: string): string =>
-  join(o.sandbox_root, o.project_id, sandbox_id);
+  locate(join(o.sandbox_root, o.project_id), sandbox_id);
 
 export const artifactDir = (o: CodeAdapterOptions, sandbox_id: string): string =>
-  join(o.artifacts_root, sandbox_id);
+  locate(o.artifacts_root, sandbox_id);
 
 export const retainedArtifacts = (o: CodeAdapterOptions, id: string): readonly string[] => {
   const dir = artifactDir(o, id);
@@ -135,28 +152,63 @@ const rescueUnsavedWork = async (
   const others = await runGit(path, ['ls-files', '--others', '--exclude-standard']);
   const dir = artifactDir(o, sandbox_id);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, 'unsaved-work.txt'),
-    `${patch.stdout}\n--- resources present only in the sandbox ---\n${others.stdout}`,
-    'utf8',
-  );
 
-  // The record above is TEXT, and loses two whole classes of content on its own: a resource never
-  // added to the index appears only as a *name* in that listing, and a changed binary renders as
-  // "Binary files ... differ". The caller is about to force a teardown, so those bytes have no
-  // other home -- and `retained_artifacts` would still report the work as retained.
+  // A patch is TEXT, and loses two whole classes of content on its own: a resource never added to
+  // the index appears only as a *name* in that listing, and a changed binary renders as "Binary
+  // files ... differ". The caller is about to force a teardown, so those bytes have no other home
+  // -- and `retained_artifacts` would still report the work as retained.
   //
   // That is invariant 1 in the one record someone reads before deciding a sandbox is safe to
-  // destroy, so the bytes are copied rather than described. Named for what it holds, not for how
-  // the substrate classified it: a reader wants the resource back, not a lesson about index state.
+  // destroy, so bytes that are the sandbox's own are copied rather than described. Named for what
+  // it holds, not for how the substrate classified it: a reader wants the resource back, not a
+  // lesson about index state.
+  const unretained: string[] = [];
   for (const rel of await unrecordedByPatch(path)) {
-    const from = join(path, rel);
+    const from = under(path, rel);
+    const to = under(dir, 'unsaved-resources', rel);
+    if (from === null || to === null) {
+      unretained.push(`${rel}: names a location outside this sandbox`);
+      continue;
+    }
+    const entry = lstatSync(from, { throwIfNoEntry: false });
     // A deletion is already fully described by the patch, and has no bytes left to copy.
-    if (!existsSync(from)) continue;
-    const to = join(dir, 'unsaved-resources', rel);
-    mkdirSync(dirname(to), { recursive: true });
-    copyFileSync(from, to);
+    if (entry === undefined) continue;
+    // A reference is not content, and it is never followed. Its bytes belong to whatever it names
+    // -- anywhere on the host, an owner's keys included -- and copying those into a retained
+    // artifact would rescue something that was never this sandbox's work. What the reference says
+    // *is* the resource, so that is what the record keeps.
+    if (entry.isSymbolicLink()) {
+      unretained.push(
+        `${rel}: a reference to ${readlinkSync(from)}, recorded rather than followed`,
+      );
+      continue;
+    }
+    if (!entry.isFile()) {
+      unretained.push(`${rel}: not a resource whose bytes can be retained`);
+      continue;
+    }
+    try {
+      mkdirSync(dirname(to), { recursive: true });
+      copyFileSync(from, to);
+    } catch {
+      unretained.push(`${rel}: could not be retained`);
+    }
   }
+
+  // What was *not* retained belongs in the record too. A rescue that drops a resource in silence
+  // reads exactly like one that had nothing to drop, and this is the record someone reads before
+  // accepting the loss -- invariant 1 again, from the other side.
+  writeFileSync(
+    join(dir, 'unsaved-work.txt'),
+    [
+      patch.stdout,
+      '--- resources present only in the sandbox ---',
+      others.stdout,
+      '--- resources whose bytes were not retained ---',
+      unretained.length > 0 ? `${unretained.join('\n')}\n` : '(none)\n',
+    ].join('\n'),
+    'utf8',
+  );
 };
 
 /**
@@ -168,12 +220,16 @@ const unrecordedByPatch = async (path: string): Promise<readonly string[]> => {
   // NUL-delimited: a path may contain a space, and `ls-files` would otherwise quote and escape it,
   // producing a name that does not exist on disk.
   const untracked = await runGit(path, ['ls-files', '--others', '--exclude-standard', '-z']);
-  const unrendered = await runGit(path, ['diff', '--numstat', 'HEAD']);
+  // Same `-z`, same reason, and it was missing here: git C-quotes a name containing a control
+  // character, a quote or a backslash whatever `core.quotePath` says, so without it the name comes
+  // back in a spelling that does not exist on disk and the copy above skips it -- a teardown that
+  // reports the work as retained and keeps none of it. `--no-renames` keeps every record one field.
+  const unrendered = await runGit(path, ['diff', '--numstat', '--no-renames', '-z', 'HEAD']);
   return [
     ...new Set([
       ...untracked.stdout.split('\0').filter((p) => p.length > 0),
       ...unrendered.stdout
-        .split('\n')
+        .split('\0')
         .filter((l) => l.startsWith('-\t-\t'))
         .map((l) => l.slice(4))
         .filter((p) => p.length > 0),

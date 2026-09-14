@@ -33,15 +33,30 @@ export const createCodeAdapter = (options: CodeAdapterOptions): DomainAdapter =>
       sameProject(project);
       return openSandbox(options, basis);
     },
-    inspect_sandbox: (sandbox) => inspectSandbox(options, sandbox),
-    close_sandbox: (sandbox, policy) => closeSandbox(options, sandbox, policy),
-    compute_change_set: (sandbox) => computeChangeSet(options, sandbox),
+    // A sandbox carries the Project it belongs to, and these four were taking that on trust. An
+    // instance bound to one Project answering about another's sandbox reaches into this Project's
+    // locations under another Project's name -- the wrong answer, attributed wrongly, for good.
+    inspect_sandbox: async (sandbox) => {
+      sameProject(sandbox.project_id);
+      return inspectSandbox(options, sandbox);
+    },
+    close_sandbox: async (sandbox, policy) => {
+      sameProject(sandbox.project_id);
+      return closeSandbox(options, sandbox, policy);
+    },
+    compute_change_set: async (sandbox) => {
+      sameProject(sandbox.project_id);
+      return computeChangeSet(options, sandbox);
+    },
     render_change_set: async (change_set, surface) => renderChangeSet(change_set, surface),
     declared_checks: async (project) => {
       sameProject(project);
       return declaredChecks(options);
     },
-    run_checks: (sandbox, specs) => runChecks(options, sandbox, specs),
+    run_checks: async (sandbox, specs) => {
+      sameProject(sandbox.project_id);
+      return runChecks(options, sandbox, specs);
+    },
     apply_plan: (change_set, policy) => applyPlan(options, change_set, policy),
     confirm_applied: async (plan_id, broker_results) => confirmApplied(plan_id, broker_results),
     revert_or_compensate: async (result) => revertOrCompensate(options, result),

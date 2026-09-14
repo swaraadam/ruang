@@ -9,8 +9,9 @@
  * makes the answer `unknown`, which fails closed (invariant 4).
  */
 import { existsSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { relative } from 'node:path';
 import type { Basis, ResourceId, Staleness } from '@internal/domain';
+import { under } from './paths.js';
 import { runGit } from './process.js';
 
 /** Not a plausible default: the literal word, so an unresolved ref reads as unresolved. */
@@ -33,12 +34,10 @@ export const refResolves = async (root: string, ref: string): Promise<boolean> =
  * means "refuse to act on this", which is the correct outcome and needs no new failure mode.
  */
 export const versionOf = async (root: string, resource_id: ResourceId): Promise<string> => {
-  if (isAbsolute(resource_id)) return UNREADABLE_VERSION;
-  const full = resolve(root, resource_id);
-  const inside = relative(root, full);
-  if (inside.startsWith('..') || inside.length === 0) return UNREADABLE_VERSION;
+  const full = under(root, resource_id);
+  if (full === null) return UNREADABLE_VERSION;
   if (!existsSync(full)) return ABSENT_VERSION;
-  const r = await runGit(root, ['hash-object', '--', inside]);
+  const r = await runGit(root, ['hash-object', '--', relative(root, full)]);
   return r.code === 0 && r.stdout.trim().length > 0 ? r.stdout.trim() : UNREADABLE_VERSION;
 };
 

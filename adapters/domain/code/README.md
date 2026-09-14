@@ -27,5 +27,9 @@ git source of record by shelling out to `git`; nothing here is a dependency.
   moved ref with no consulted input touched is not stale.
 - **`unknown` fails closed.** An unresolvable basis refuses to open a sandbox or plan an apply.
 - **`inspect_sandbox` is a query.** Every command it runs is read-only and takes no optional lock.
-- **No push, no merge, no history rewrite.** `src/process.ts` holds an allow-list of subcommands;
-  apply is planned here and executed by the spine, never from inside this package.
+- **No push, no merge, no history rewrite.** `src/process.ts` holds an allow-list of subcommands
+  and, where one has verbs of its own, of verb pairs; apply is planned here and executed by the
+  spine, never from inside this package.
+- **An identifier this adapter did not issue locates nothing.** Every path derived from a
+  caller-supplied id is proven to still be inside the root it was derived from (`src/paths.ts`),
+  because `join` collapses `..` in silence and teardown is destructive at the end of a derivation.

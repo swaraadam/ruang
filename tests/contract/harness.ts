@@ -37,6 +37,22 @@ export type ContractSubject = {
    * then asserts nothing -- but it may not claim retention it does not perform.
    */
   leaveUnrecordableWork(sandbox: Sandbox): readonly UnrecordableResource[];
+  /**
+   * Place a *reference* to content held outside the sandbox inside the sandbox, and return what it
+   * points at. Those bytes were never the sandbox's own work, so a teardown record may name the
+   * reference and must never resolve it — otherwise sandbox content, which is agent output and
+   * project content, decides what a privileged read copies into durable evidence.
+   *
+   * An adapter whose domain has no notion of a reference returns an empty list and the contract
+   * asserts nothing of it.
+   */
+  leaveReferenceToOutsideWork(sandbox: Sandbox): readonly OutsideReference[];
+  /**
+   * A sandbox this adapter never issued, whose id is shaped to reach outside wherever the adapter
+   * keeps sandboxes, together with content that must be untouched afterwards. Every adapter derives
+   * *some* location from a sandbox id, and teardown is destructive at the end of that derivation.
+   */
+  forgedSandbox(): { readonly sandbox: Sandbox; readonly untouchable: readonly string[] };
   /** A basis this adapter cannot resolve — the input for the `unknown` path. */
   unresolvableBasis(): Basis;
   /** Every path whose bytes must not change when a query is called. */
@@ -49,6 +65,16 @@ export type UnrecordableResource = {
   /** For test output only. The assertion is on bytes; where the adapter puts them is its business. */
   readonly label: string;
   readonly bytes: Uint8Array;
+};
+
+/** A reference inside a sandbox to content stored elsewhere, and the bytes it names. */
+export type OutsideReference = {
+  /** For test output only. */
+  readonly label: string;
+  /** How the reference is identified inside the sandbox; a teardown record has to name it. */
+  readonly resource_id: ResourceId;
+  /** The bytes it points at. They were never the sandbox's own, so they must not be retained. */
+  readonly referent: Uint8Array;
 };
 
 export type ContractHarness = {

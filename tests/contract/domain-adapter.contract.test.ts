@@ -153,6 +153,44 @@ describe.each(HARNESSES)('domain adapter contract: $name', (harness) => {
         expect(found, `${resource.label} was not recoverable from retained_artifacts`).toBe(true);
       }
     });
+
+    it('§10.4: a teardown record names a reference to content outside the sandbox, never resolves it', async () => {
+      const sandbox = await opened();
+      const references = s.leaveReferenceToOutsideWork(sandbox);
+      if (references.length === 0) return; // an adapter with no notion of a reference
+
+      const forced = await s.adapter.close_sandbox(sandbox, { ...retain, force: true });
+      expect(forced.closed).toBe(true);
+      const kept = forced.retained_artifacts.flatMap(filesUnder).map((f) => readFileSync(f));
+      for (const reference of references) {
+        // Content the sandbox only pointed at is content the sandbox never had. Sandbox content is
+        // agent output and project content, so following a reference lets either choose what a
+        // privileged read copies into durable evidence.
+        const resolved = kept.some((bytes) => bytes.includes(Buffer.from(reference.referent)));
+        expect(resolved, `${reference.label} was resolved into retained evidence`).toBe(false);
+        // ...and dropping it silently is the other failure: invariant 1, a record that reads the
+        // same whether there was nothing to keep or something that was not kept.
+        const named = kept.some((bytes) => bytes.includes(reference.resource_id));
+        expect(named, `${reference.label} is not named in the record at all`).toBe(true);
+      }
+    });
+
+    it('invariant 3: a sandbox identifier this adapter never issued locates nothing and destroys nothing', async () => {
+      const forged = s.forgedSandbox();
+      const before = fingerprint(forged.untouchable);
+      const destructive = { force: false, retain_artifacts: false } as const;
+      await expect(s.adapter.close_sandbox(forged.sandbox, destructive)).rejects.toThrow();
+      await expect(s.adapter.inspect_sandbox(forged.sandbox)).rejects.toThrow();
+      expect(fingerprint(forged.untouchable)).toBe(before);
+    });
+
+    it('§5.2: a sandbox attributed to another Project is refused, not answered about', async () => {
+      const sandbox = await opened();
+      const elsewhere = { ...sandbox, project_id: `${s.project}-elsewhere` };
+      await expect(s.adapter.inspect_sandbox(elsewhere)).rejects.toThrow();
+      await expect(s.adapter.compute_change_set(elsewhere)).rejects.toThrow();
+      await expect(s.adapter.close_sandbox(elsewhere, retain)).rejects.toThrow();
+    });
   });
 
   describe('change set (§5.2.1)', () => {

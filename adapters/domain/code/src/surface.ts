@@ -45,6 +45,7 @@ export type CodeAdapterOptions = {
 export type RefusalCode =
   | 'basis_unknown'
   | 'unknown_project'
+  | 'unsafe_identifier'
   | 'sandbox_not_materialised'
   | 'change_budget_exceeded'
   | 'risk_not_permitted';

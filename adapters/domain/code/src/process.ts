@@ -1,9 +1,10 @@
 /**
  * The only place this package starts a process. `runGit` reaches the source of record and is
- * restricted to an allow-list of subcommands, so the adapter cannot grow a push, a merge or a
- * history rewrite by accident — apply is planned here and executed by the spine's broker (§5.2.2),
- * never from inside. `runProcess` runs a declared check's argv and has no such list, because a
- * check is arbitrary by definition; it is still argv, never a shell string.
+ * restricted to an allow-list of subcommands *and*, where a subcommand has verbs of its own, of
+ * verb pairs — so the adapter cannot grow a push, a merge or a history rewrite by accident. Apply
+ * is planned here and executed by the spine's broker (§5.2.2), never from inside. `runProcess`
+ * runs a declared check's argv and has no such list, because a check is arbitrary by definition;
+ * it is still argv, never a shell string.
  */
 import { spawn } from 'node:child_process';
 
@@ -15,8 +16,8 @@ export type ProcessResult = {
 };
 
 /**
- * Read-only queries plus the two sandbox-lifecycle verbs. `push`, `merge`, `rebase`, `reset`,
- * `branch` and `tag` are absent on purpose and adding one is a reviewable act.
+ * Read-only queries plus the sandbox lifecycle. `push`, `merge`, `rebase`, `reset`, `branch` and
+ * `tag` are absent on purpose and adding one is a reviewable act.
  */
 const ALLOWED_SUBCOMMANDS: ReadonlySet<string> = new Set([
   'rev-parse',
@@ -26,6 +27,14 @@ const ALLOWED_SUBCOMMANDS: ReadonlySet<string> = new Set([
   'ls-files',
   'cat-file',
   'worktree',
+]);
+
+/**
+ * The one entry on the list above that carries verbs of its own, and only three are ever used:
+ * naming the subcommand alone would admit `lock`, `move` and `repair` as well.
+ */
+const ALLOWED_VERBS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['worktree', new Set(['add', 'remove', 'prune'])],
 ]);
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -79,5 +88,8 @@ export const runGit = async (cwd: string, args: readonly string[], ms?: number):
   // spine can drive the adapter into.
   if (sub === undefined || !ALLOWED_SUBCOMMANDS.has(sub))
     throw new Error(`adapter-domain-code: subcommand not on the allow-list: ${sub ?? '(none)'}`);
+  const verbs = ALLOWED_VERBS.get(sub);
+  if (verbs !== undefined && !verbs.has(args[1] ?? ''))
+    throw new Error(`adapter-domain-code: verb not on the allow-list: ${sub} ${args[1] ?? '(none)'}`);
   return runProcess(cwd, ['git', ...ALWAYS, ...args], ms);
 };
