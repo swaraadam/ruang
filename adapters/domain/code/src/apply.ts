@@ -28,9 +28,39 @@ const kindOf = (operation_id: string): OperationKind | null => {
   return OPERATION_KINDS.find((k) => k === tail) ?? null;
 };
 
+/**
+ * The size a budget decision is made on, **measured from the change set's own content** and never
+ * read off the number the change set reports about itself.
+ *
+ * `change_size` is a field on an object the spine hands in. Gating on it made the budget a claim
+ * its own subject got to make: a change set carrying five thousand real lines with `change_size: 1`
+ * planned cleanly under a budget of fifty. Invariant 5 — judgement never owns the consequence — and
+ * a self-report is exactly that judgement. Counting the way `compute_change_set` counts leaves an
+ * honest change set untouched and leaves a dishonest one nothing to buy.
+ *
+ * Deliberately *not* `content_hash`. Verifying that would put a 64-bit, expressly non-cryptographic
+ * digest under an apply decision, which `packages/protocol` asks be revisited by ADR before anyone
+ * leans on it. Measuring needs neither the hash nor the ADR, so the note there stays true.
+ */
+const measure = (change_set: ChangeSet): number =>
+  change_set.change_unit === 'files'
+    ? change_set.changes.length
+    : change_set.changes.reduce(
+        (n, c) => n + (c.kind === 'text_patch' ? c.added + c.removed : 0),
+        0,
+      );
+
 // prettier-ignore
 export const applyPlan = async (o: CodeAdapterOptions, change_set: ChangeSet, policy: ApplyPolicy): Promise<ApplyPlan> => {
-  const { change_size, change_unit } = change_set;
+  const { change_unit } = change_set;
+  const change_size = measure(change_set);
+  // A change set whose self-report disagrees with its own content describes two different reviews,
+  // and every surface downstream would show the smaller one. Invariant 3: freeze, do not pick.
+  if (change_size !== change_set.change_size)
+    throw new AdapterRefusal(
+      'change_set_inconsistent',
+      `this change set reports ${change_set.change_size} ${change_unit} and contains ${change_size}`,
+    );
   if (change_size > policy.change_budget)
     throw new AdapterRefusal(
       'change_budget_exceeded',

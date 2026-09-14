@@ -21,6 +21,7 @@ export const ABSENT_VERSION = 'absent';
 export const UNREADABLE_VERSION = 'unknown';
 
 export const currentRef = async (root: string): Promise<string> => {
+  // Reads a ref out of stdout, never a path, so the quoting rule in `process.ts` does not apply.
   const r = await runGit(root, ['rev-parse', 'HEAD']);
   return r.code === 0 && r.stdout.trim().length > 0 ? r.stdout.trim() : UNRESOLVED_REF;
 };
@@ -37,6 +38,7 @@ export const versionOf = async (root: string, resource_id: ResourceId): Promise<
   const full = under(root, resource_id);
   if (full === null) return UNREADABLE_VERSION;
   if (!existsSync(full)) return ABSENT_VERSION;
+  // The path is an *argument* past `--`, and stdout is a version. Neither direction is quoted.
   const r = await runGit(root, ['hash-object', '--', relative(root, full)]);
   return r.code === 0 && r.stdout.trim().length > 0 ? r.stdout.trim() : UNREADABLE_VERSION;
 };

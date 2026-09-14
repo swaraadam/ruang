@@ -7,7 +7,7 @@
  */
 import { spawnSync } from 'node:child_process';
 // prettier-ignore
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCodeAdapter } from '@internal/adapter-domain-code';
@@ -115,7 +115,25 @@ export const codeHarness: ContractHarness = {
         const referent = Buffer.from('bytes that were never this sandbox to give away\n');
         writeFileSync(join(outside, 'held-elsewhere.bin'), referent);
         symlinkSync(join(outside, 'held-elsewhere.bin'), join(inSandbox(sandbox), 'pointer.txt'));
-        return [{ label: 'a reference out of the sandbox', resource_id: 'pointer.txt', referent }];
+        // The second kind, which does not announce itself: a name inside the sandbox for bytes
+        // that live outside it. Every property a resource of its own has -- it reads as ordinary
+        // content, at ordinary size -- so a check that asks "is this a reference?" says no.
+        const shared = Buffer.from(
+          'bytes a second name inside the sandbox does not make its own\n',
+        );
+        writeFileSync(join(outside, 'shared-elsewhere.bin'), shared);
+        linkSync(
+          join(outside, 'shared-elsewhere.bin'),
+          join(inSandbox(sandbox), 'second-name.txt'),
+        );
+        return [
+          { label: 'a reference out of the sandbox', resource_id: 'pointer.txt', referent },
+          {
+            label: 'a second name for content held outside the sandbox',
+            resource_id: 'second-name.txt',
+            referent: shared,
+          },
+        ];
       },
       forgedSandbox: () => {
         // Beside both roots, so an id of `..` reaches it from either once a path is derived.

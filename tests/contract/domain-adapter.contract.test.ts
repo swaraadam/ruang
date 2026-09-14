@@ -267,6 +267,19 @@ describe.each(HARNESSES)('domain adapter contract: $name', (harness) => {
       await expect(s.adapter.apply_plan(set, { ...wide, change_budget: 0 })).rejects.toThrow();
     });
 
+    it('§16.6: the budget is measured from the change set, not read off its summary of itself', async () => {
+      const set = await unsavedChangeSet();
+      // A change set is data handed to the gate. If the gate believes the size the change set
+      // reports, the budget is a claim its own subject gets to make -- and invariant 5 is that
+      // judgement never owns the consequence. The changes below are the real ones, untouched.
+      const understated = { ...set, change_size: 0, content_hash: 'not-a-hash' };
+      await expect(
+        s.adapter.apply_plan(understated, { ...wide, change_budget: 0 }),
+      ).rejects.toThrow();
+      // And with room to spare, so what is refused is the dishonesty rather than the size.
+      await expect(s.adapter.apply_plan(understated, wide)).rejects.toThrow();
+    });
+
     it('§5.5: confirm_applied reconciles, and reversal is a plan or an explicit refusal', async () => {
       const plan = await s.adapter.apply_plan(await unsavedChangeSet(), wide);
       const done = { succeeded: true, detail: 'applied by the broker' };

@@ -48,6 +48,8 @@ export type RefusalCode =
   | 'unsafe_identifier'
   | 'sandbox_not_materialised'
   | 'change_budget_exceeded'
+  /** The change set's own summary of itself does not match the changes it carries. */
+  | 'change_set_inconsistent'
   | 'risk_not_permitted';
 
 /**

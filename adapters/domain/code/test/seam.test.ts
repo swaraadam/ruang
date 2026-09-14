@@ -6,10 +6,17 @@
  * here is git-specific: that the substrate stays inside the package, that the process runner cannot
  * grow a mutating verb, and that patch range headers become the anchors they claim to be.
  */
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+// prettier-ignore
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { DomainAdapter } from '@internal/domain';
+import type { ChangeSet } from '@internal/protocol';
 import { describe, expect, it } from 'vitest';
 import { codeHarness } from '../../../../tests/contract/code-harness.js';
+import { createCodeAdapter } from '../src/adapter.js';
 import { runGit } from '../src/process.js';
 
 /**
@@ -139,6 +146,202 @@ describe('patch range headers become the anchors they claim to be (§5.2.1)', ()
       expect(set.change_size).toBe(1);
     } finally {
       s.tearDown();
+    }
+  });
+});
+
+/**
+ * A name is an input too, and the substrate does not print every name literally: a control
+ * character, a quote or a backslash makes it escape the name in every listing that is not
+ * NUL-delimited, and `core.quotePath=false` covers only the non-ASCII case. Read back, that
+ * spelling names nothing on disk.
+ *
+ * Neither consequence was cosmetic. An untracked resource under a name this module then failed to
+ * find counted as **zero** lines, so a filename set the apparent size of a change set -- 506 real
+ * lines reported as 6, planned cleanly under a budget of 20. And an escaped patch header did not
+ * match, so the ranges belonging to that resource were appended to the anchors of the resource
+ * rendered *before* it: a review surface showing edits against a file that does not contain them,
+ * which is invariant 1 in the record a reviewer trusts.
+ *
+ * So the assertions are the size the caller is told against the size that is there, and every range
+ * against the resource it names. A name that merely round-trips as a string satisfies neither.
+ */
+describe('a resource whose name the substrate cannot print literally (invariant 1, §16.6)', () => {
+  const PROJECT = 'names-are-input';
+  const git = (cwd: string, args: readonly string[]): void => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`fixture setup failed: git ${args.join(' ')}\n${r.stderr}`);
+  };
+
+  type Fixture = {
+    set: ChangeSet;
+    adapter: DomainAdapter;
+    at: string;
+    tearDown: () => void;
+  };
+
+  const fixture = async (
+    seed: (at: string) => void,
+    work: (at: string) => void,
+  ): Promise<Fixture> => {
+    const root = mkdtempSync(join(tmpdir(), 'hostile-names-'));
+    const source = join(root, 'source');
+    mkdirSync(source, { recursive: true });
+    git(source, ['init', '-q', '-b', 'main', '.']);
+    seed(source);
+    git(source, ['add', '-A']);
+    const who = ['user.name=fixture', 'user.email=f@example.invalid', 'commit.gpgsign=false'];
+    git(source, [...who.flatMap((c) => ['-c', c]), 'commit', '-q', '-m', 'baseline']);
+
+    const sandboxes = join(root, 'sandboxes');
+    const adapter = createCodeAdapter({
+      project_id: PROJECT,
+      source_of_record: source,
+      sandbox_root: sandboxes,
+      artifacts_root: join(root, 'artifacts'),
+    });
+    const basis = await adapter.snapshot_basis(PROJECT, []);
+    const sandbox = await adapter.open_sandbox(PROJECT, basis);
+    const at = join(sandboxes, PROJECT, sandbox.sandbox_id);
+    work(at);
+    return {
+      set: await adapter.compute_change_set(sandbox),
+      adapter,
+      at,
+      tearDown: () => rmSync(root, { recursive: true, force: true }),
+    };
+  };
+
+  type Named = { resource_id: string };
+  const byId = <T extends Named>(xs: readonly T[]): T[] =>
+    [...xs].sort((a, b) => (a.resource_id < b.resource_id ? -1 : 1));
+  const patchesOf = (set: ChangeSet): Named[] =>
+    set.changes.flatMap((c) => (c.kind === 'text_patch' ? [c] : []));
+  const range = (resource_id: string, start_line: number, end_line: number): unknown => ({
+    kind: 'text_range',
+    resource_id,
+    start_line,
+    end_line,
+  });
+
+  /** Every spelling that forces an escape, plus two that do not, so the plain path stays covered. */
+  // prettier-ignore
+  const NAMES = [
+    'plain', 'with space', '-leading-dash', 'nön-äscii-Ω-漢字',
+    'new\nline', 'tab\there', 'back\\slash', 'double"quote',
+  ];
+  const BEFORE = 't1\nt2\nt3\n';
+  const AFTER = 't1\nEDITED\nt3\n';
+  const FRESH_LINES = 7;
+  const fresh = `${Array.from({ length: FRESH_LINES }, (_, i) => `n${i}`).join('\n')}\n`;
+
+  it('is counted, found and anchored under the name it is actually stored as', async () => {
+    const f = await fixture(
+      (at) => {
+        for (const n of NAMES) writeFileSync(join(at, `${n}-t.md`), BEFORE);
+        writeFileSync(join(at, 'removed.md'), 'r1\nr2\n');
+      },
+      (at) => {
+        for (const n of NAMES) {
+          writeFileSync(join(at, `${n}-t.md`), AFTER);
+          writeFileSync(join(at, `${n}-u.md`), fresh);
+        }
+        unlinkSync(join(at, 'removed.md'));
+      },
+    );
+    try {
+      const expected = [
+        ...NAMES.map((n) => ({
+          kind: 'text_patch',
+          resource_id: `${n}-t.md`,
+          anchors: [range(`${n}-t.md`, 2, 2)],
+          added: 1,
+          removed: 1,
+        })),
+        ...NAMES.map((n) => ({
+          kind: 'text_patch',
+          resource_id: `${n}-u.md`,
+          anchors: [range(`${n}-u.md`, 1, FRESH_LINES)],
+          added: FRESH_LINES,
+          removed: 0,
+        })),
+        // A removal's new side names the null device, which is no resource at all: nothing to
+        // anchor, and nothing to spill onto whichever resource the patch rendered before it.
+        { kind: 'text_patch', resource_id: 'removed.md', anchors: [], added: 0, removed: 2 },
+      ];
+      expect(byId(patchesOf(f.set))).toEqual(byId(expected));
+
+      const truth = NAMES.length * 2 + NAMES.length * FRESH_LINES + 2;
+      expect(f.set.change_size).toBe(truth);
+      // Not just a matching string: the name handed back is the one the resource is stored under.
+      for (const n of NAMES) {
+        expect(existsSync(join(f.at, `${n}-t.md`))).toBe(true);
+        expect(existsSync(join(f.at, `${n}-u.md`))).toBe(true);
+      }
+
+      // The consequence the count actually has. Understating it is not a fidelity loss, it is the
+      // budget gate answering about a change set that does not exist.
+      const risk = { max_risk: 'high' } as const;
+      await expect(
+        f.adapter.apply_plan(f.set, { ...risk, change_budget: truth - 1 }),
+      ).rejects.toThrow();
+      await expect(
+        f.adapter.apply_plan(f.set, { ...risk, change_budget: truth }),
+      ).resolves.toBeDefined();
+    } finally {
+      f.tearDown();
+    }
+  });
+
+  it('keeps a range inside a resource whose own content spells a patch header', async () => {
+    const f = await fixture(
+      (at) => {
+        writeFileSync(
+          join(at, 'guide.md'),
+          `${Array.from({ length: 10 }, (_, i) => `g${i + 1}`).join('\n')}\n`,
+        );
+        writeFileSync(join(at, 'target.md'), 'x1\nx2\n');
+      },
+      (at) => {
+        // Content, not structure. Rendered with its leading `+`, this added line is indistinguishable
+        // from the header of the next resource -- and a repository full of documents about patches
+        // is not an exotic input here.
+        const body = [
+          'g1',
+          '++ b/target.md',
+          'g2',
+          'g3',
+          'g4',
+          'g5',
+          'g6',
+          'g7',
+          'g8',
+          'g9',
+          'EDITED',
+        ];
+        writeFileSync(join(at, 'guide.md'), `${body.join('\n')}\n`);
+        writeFileSync(join(at, 'target.md'), 'x1\nEDITED\n');
+      },
+    );
+    try {
+      expect(byId(patchesOf(f.set))).toEqual([
+        {
+          kind: 'text_patch',
+          resource_id: 'guide.md',
+          anchors: [range('guide.md', 2, 2), range('guide.md', 11, 11)],
+          added: 2,
+          removed: 1,
+        },
+        {
+          kind: 'text_patch',
+          resource_id: 'target.md',
+          anchors: [range('target.md', 2, 2)],
+          added: 1,
+          removed: 1,
+        },
+      ]);
+    } finally {
+      f.tearDown();
     }
   });
 });

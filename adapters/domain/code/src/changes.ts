@@ -19,17 +19,27 @@ import { sandboxPath } from './sandbox.js';
 import type { CodeAdapterOptions } from './surface.js';
 
 /** Ranges live in the `+` side of a patch range header: `@@ -a,b +c,d @@`. */
-const RANGE = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
-const FILE_HEADER = /^\+\+\+ b\/(.*)$/;
+const RANGE = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+/** Either spelling of the patch's new-side header: `+++ b/name`, or `+++ "b/na\tme"` when quoted. */
+const FILE_HEADER = /^\+\+\+ (?:"(.*)"|(.*))$/;
+const NEW_SIDE_PREFIX = 'b/';
 /** Anything larger is treated as an asset rather than read into memory to count lines. */
 const MAX_TEXT_BYTES = 1_000_000;
 
 type Counts = { added: number; removed: number; binary: boolean };
 
+/**
+ * NUL-delimited records, `added \t removed \t name`. A name is caller-controlled content, and every
+ * listing that is not NUL-delimited comes back C-quoted once the name holds a control character, a
+ * quote or a backslash — whatever `core.quotePath` says, which only covers non-ASCII. Read back,
+ * that spelling names nothing on disk.
+ *
+ * The tab split survives a name containing tabs because only the first two fields are counts.
+ */
 const parseCounts = (numstat: string): Map<string, Counts> => {
   const out = new Map<string, Counts>();
-  for (const line of numstat.split('\n')) {
-    const parts = line.split('\t');
+  for (const record of numstat.split('\0')) {
+    const parts = record.split('\t');
     if (parts.length < 3) continue;
     const [a, r] = parts;
     const path = parts.slice(2).join('\t');
@@ -39,21 +49,89 @@ const parseCounts = (numstat: string): Map<string, Counts> => {
   return out;
 };
 
-const parseAnchors = (patch: string): Map<string, ChangeAnchor[]> => {
+/** The escapes the substrate uses when it quotes a name; anything else is a three-digit octal byte. */
+const UNESCAPE: ReadonlyMap<string, string> = new Map([
+  ['a', '\x07'],
+  ['b', '\b'],
+  ['f', '\f'],
+  ['n', '\n'],
+  ['r', '\r'],
+  ['t', '\t'],
+  ['v', '\v'],
+  ['"', '"'],
+  ['\\', '\\'],
+]);
+
+const unquoteName = (body: string): string => {
+  let out = '';
+  for (let i = 0; i < body.length; i += 1) {
+    if (body[i] !== '\\') {
+      out += body[i];
+      continue;
+    }
+    const short = UNESCAPE.get(body[i + 1] ?? '');
+    if (short !== undefined) {
+      out += short;
+      i += 1;
+      continue;
+    }
+    const octal = /^[0-7]{3}/.exec(body.slice(i + 1, i + 4));
+    if (octal === null) return body;
+    out += String.fromCharCode(Number.parseInt(octal[0], 8));
+    i += 3;
+  }
+  return out;
+};
+
+/**
+ * Ranges, attributed to the resource they are actually about.
+ *
+ * Two things make that harder than reading the header. A quoted header is not the name the rest of
+ * this module uses, and a header that does not parse used to leave the previous resource selected —
+ * so a quoted name's ranges were appended to the resource *before* it, and a review surface showed
+ * edits against a file that does not contain them (invariant 1). And a `+++` line inside a hunk
+ * body is content: a resource whose own content is a patch would otherwise redirect the parse.
+ *
+ * So: ranges are counted out of the hunk body, which is exactly `old + new` lines at `--unified=0`,
+ * and a header only counts outside one. `known` is the authoritative set of names, taken from the
+ * NUL-delimited listing; a header that does not resolve into it selects **nothing**, so an
+ * unexpected spelling costs detail and can never move a range onto a resource it does not belong to.
+ * Unquoting is therefore fidelity on top of a rule that is already safe without it.
+ */
+const parseAnchors = (patch: string, known: ReadonlySet<string>): Map<string, ChangeAnchor[]> => {
   const out = new Map<string, ChangeAnchor[]>();
   let current: string | null = null;
+  let body = 0;
   for (const line of patch.split('\n')) {
-    const header = FILE_HEADER.exec(line);
-    if (header?.[1] !== undefined) {
-      current = header[1];
-      if (!out.has(current)) out.set(current, []);
+    if (body > 0) {
+      // "\ No newline at end of file" annotates the preceding line rather than being one of them.
+      if (!line.startsWith('\\')) body -= 1;
       continue;
     }
     const range = RANGE.exec(line);
-    if (range === null || current === null) continue;
-    const start = Number(range[1]);
-    const span = Math.max(range[2] === undefined ? 1 : Number(range[2]), 1);
-    out.get(current)?.push(textRange(current, start, start + span - 1));
+    if (range !== null) {
+      const removed = range[1] === undefined ? 1 : Number(range[1]);
+      const start = Number(range[2]);
+      const added = range[3] === undefined ? 1 : Number(range[3]);
+      body = removed + added;
+      if (current === null) continue;
+      out.get(current)?.push(textRange(current, start, start + Math.max(added, 1) - 1));
+      continue;
+    }
+    const header = FILE_HEADER.exec(line);
+    if (header === null) continue;
+    // An unquoted name containing a space keeps the patch format's tab between the path and the
+    // timestamp field that follows it, which is empty here -- so the raw spelling carries one
+    // trailing tab that is not part of the name. A name genuinely *ending* in a tab holds a control
+    // character and therefore arrives quoted instead, so stripping one here can never eat a real
+    // character. Unreported, and the same loss as the quoted case: the resource kept its counts and
+    // silently lost every range.
+    const named =
+      header[1] === undefined ? (header[2] ?? '').replace(/\t$/, '') : unquoteName(header[1]);
+    // A removal's new side is the null device, which resolves to nothing and so selects nothing.
+    const id = named.startsWith(NEW_SIDE_PREFIX) ? named.slice(NEW_SIDE_PREFIX.length) : '';
+    current = known.has(id) ? id : null;
+    if (current !== null && !out.has(current)) out.set(current, []);
   }
   return out;
 };
@@ -73,6 +151,7 @@ const lineCount = (path: string): number => {
 
 // prettier-ignore
 const assetChange = async (root: string, ref: string, id: string, full: string): Promise<RenderableChange> => {
+  // `id` is an argument and stdout is a byte count: no path is read back out of this one.
   const before = await runGit(root, ['cat-file', '-s', `${ref}:${id}`]);
   const was = before.code === 0 ? Number(before.stdout.trim()) : 0;
   const now = existsSync(full) ? statSync(full).size : 0;
@@ -87,12 +166,20 @@ export const computeChangeSet = async (
 ): Promise<ChangeSet> => {
   const path = sandboxPath(o, sandbox.sandbox_id);
   const ref = sandbox.basis.ref;
-  const counts = parseCounts((await runGit(path, ['diff', '--numstat', 'HEAD'])).stdout);
+  // `-z` on both listings, and `--no-renames` so every record stays one field: a name that comes
+  // back quoted is a name this module then fails to find on disk, and an untracked resource it
+  // cannot find is counted as zero lines. That set the apparent size of a 506-line change set to 6
+  // and walked it through a budget of 20 -- the budget gate driven by a *filename*.
+  const counts = parseCounts(
+    (await runGit(path, ['diff', '--numstat', '--no-renames', '-z', 'HEAD'])).stdout,
+  );
+  // The patch body has no NUL-delimited form, so it is reconciled against the names above instead.
   const anchors = parseAnchors(
     (await runGit(path, ['diff', '--unified=0', '--no-color', 'HEAD'])).stdout,
+    new Set(counts.keys()),
   );
-  const others = (await runGit(path, ['ls-files', '--others', '--exclude-standard'])).stdout
-    .split('\n')
+  const others = (await runGit(path, ['ls-files', '--others', '--exclude-standard', '-z'])).stdout
+    .split('\0')
     .filter((l) => l.length > 0);
 
   const changes: RenderableChange[] = [];

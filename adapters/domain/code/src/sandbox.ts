@@ -91,6 +91,8 @@ export const inspectSandbox = async (
     safe_to_close: !dirty,
   });
   if (!existsSync(path)) return state(false, 'this sandbox is not present');
+  // Only the two status columns are read, never the name beside them, so an escaped spelling here
+  // changes nothing: a quoted name is still exactly one record on one line.
   const r = await runGit(path, ['status', '--porcelain=v1']);
   // Cannot tell is not the same as clean. Fail closed: assume there is work to lose.
   if (r.code !== 0) return state(true, 'the state of this sandbox cannot be determined');
@@ -148,8 +150,12 @@ const rescueUnsavedWork = async (
   sandbox_id: string,
   path: string,
 ): Promise<void> => {
+  // Both of these are written verbatim into the record a person reads, never parsed for a name.
+  // The listing still gets `-z`, re-joined for that reader: without it the section above the
+  // retention showed escaped spellings while the retention below it used the real ones, so the one
+  // record that has to be trusted disagreed with itself about what was there.
   const patch = await runGit(path, ['diff', '--no-color', 'HEAD']);
-  const others = await runGit(path, ['ls-files', '--others', '--exclude-standard']);
+  const others = await runGit(path, ['ls-files', '--others', '--exclude-standard', '-z']);
   const dir = artifactDir(o, sandbox_id);
   mkdirSync(dir, { recursive: true });
 
@@ -187,6 +193,16 @@ const rescueUnsavedWork = async (
       unretained.push(`${rel}: not a resource whose bytes can be retained`);
       continue;
     }
+    // A second *name* for those same bytes is the same borrowing, and it does not look like one:
+    // the entry is an ordinary resource, so the check above waves it through and one extra name for
+    // an owner's key inside the sandbox put the key into retained evidence. This adapter cannot see
+    // where the other name is without walking the host, so it does not guess -- invariant 3, the
+    // ambiguity is recorded and the bytes stay where they are. The cost is a resource genuinely the
+    // sandbox's own, named twice inside it, described instead of copied; that is the safe direction.
+    if (entry.nlink > 1) {
+      unretained.push(`${rel}: bytes also reachable under a name this adapter cannot account for`);
+      continue;
+    }
     try {
       mkdirSync(dirname(to), { recursive: true });
       copyFileSync(from, to);
@@ -203,7 +219,10 @@ const rescueUnsavedWork = async (
     [
       patch.stdout,
       '--- resources present only in the sandbox ---',
-      others.stdout,
+      others.stdout
+        .split('\0')
+        .filter((p) => p.length > 0)
+        .join('\n'),
       '--- resources whose bytes were not retained ---',
       unretained.length > 0 ? `${unretained.join('\n')}\n` : '(none)\n',
     ].join('\n'),
