@@ -105,10 +105,18 @@ export const createPathPolicy = (options: PathPolicyOptions): PathPolicy => {
  * it while running the very thing it forbids. Refusing the launcher is what makes the deny-list mean
  * what it says.
  *
- * This is NOT a sandbox, and no comment near it should imply one. A session exists to run a provider
- * agent, and an interpreter that can open a socket can start a process. What this closes is the
- * one-step laundering that made the deny-list decorative.
+ * BE PRECISE ABOUT ITS REACH. This is NOT a sandbox and NOT a privilege boundary. A session command
+ * is an arbitrary-execution surface by design: a provider agent runs there, and an interpreter that
+ * can open a socket can start a process. This refuses the OBVIOUS launders -- a shell as argv[0], a
+ * one-element command the backend would hand to a shell, an owner-run binary named directly -- and
+ * an adversary who wants a deny-listed binary has other routes. It catches accidents. Anything
+ * stronger has to live in Seam C, over who may supply a `SessionSpec.command` at all.
  */
+const fold = (v: string): string => v.toLowerCase();
+
+/** Anything a shell would treat as more than a filename. */
+const SHELL_SYNTAX = /[\s;|&<>$`(){}[\]*?~!#\\'"]/;
+
 export const COMMAND_LAUNCHERS: readonly string[] = [
   'sh',
   'bash',
@@ -144,14 +152,25 @@ export const refuseSessionCommand = (
   if (command === null || command === undefined || command.length === 0) return null;
   const program = command[0];
   if (program === undefined || program.trim().length === 0) return 'the command names no program';
+  // A ONE-ELEMENT command is handed to a shell by the backend, even after `--`. The "basename" of
+  // `'launchctl list | head -3 > f'` is that entire string, so every check below matches nothing
+  // while the shell runs all of it. Measured: this executed a deny-listed binary through the
+  // session facet with no indirection at all.
+  if (command.length === 1 && SHELL_SYNTAX.test(program)) {
+    return `a single-element command is handed to a shell, so it may not carry shell syntax: ${JSON.stringify(program)}`;
+  }
   // A leading `-` is read as an OPTION by the session backend rather than as a program, which is how
   // a caller reaches the backend's own flags -- including the one that decides where the session
   // runs. Measured against a real session backend: a command of ['-c', '/etc', 'sh'] placed the
   // session in /private/etc, discarding the canonicalized directory entirely.
   if (program.startsWith('-')) return `a command may not begin with an option: '${program}'`;
-  const base = program.split('/').pop() ?? '';
-  if (guarded.includes(base)) return `'${base}' is owner-run only and may not be a session command`;
-  if (COMMAND_LAUNCHERS.includes(base))
+  // Folded, because the boot volume this runs on is case-insensitive and `/bin/SH` is `/bin/sh`
+  // there. A case-sensitive comparison against a case-insensitive filesystem is a deny-list with a
+  // shift key for a bypass -- measured on both `/bin/SH` and `/usr/bin/SUDO`.
+  const base = fold(program.split('/').pop() ?? '');
+  if (guarded.some((g) => fold(g) === base))
+    return `'${base}' is owner-run only and may not be a session command`;
+  if (COMMAND_LAUNCHERS.some((l) => fold(l) === base))
     return `'${base}' exists to run another program, which would leave the deny-list one indirection away from what actually executes`;
   return null;
 };
@@ -174,6 +193,29 @@ const UNIT_ID = /^[A-Za-z0-9][A-Za-z0-9-]{0,62}(\.[A-Za-z0-9][A-Za-z0-9-]{0,62})
 const UNIT_ID_MAX = 128;
 
 export class UnsafeUnitIdError extends Error {}
+
+/** Refusing to overwrite a file at the composed path that this contract did not write. */
+export class ForeignManifestError extends Error {}
+
+/**
+ * Present in every manifest this contract authors, and required before it will overwrite one.
+ *
+ * The login-agent directory is SHARED. A bare identifier is a perfectly valid unit id and also the
+ * name of somebody else's agent, so `install` would replace that file and report `wrote: true`,
+ * and `repair` would read it as `divergent` and rewrite it again. It also falsifies "reversible
+ * with rm": under overwrite, `rm` does not restore what was there, so the operation would be at
+ * best compensable and in practice irreversible.
+ */
+export const MANAGED_MARKER = 'managed-unit-of-this-control-plane';
+
+const assertNotForeign = (path: string, existing: string | null): void => {
+  if (existing !== null && !existing.includes(MANAGED_MARKER)) {
+    throw new ForeignManifestError(
+      `refusing to overwrite ${path}: it exists and carries no ${MANAGED_MARKER} marker, so this ` +
+        'control plane did not write it, and overwriting destroys content rm cannot restore',
+    );
+  }
+};
 
 /** A plan field that would make the manifest do something the adapter may not do directly. */
 export class UnsafeAutostartPlanError extends Error {}
@@ -204,6 +246,14 @@ export const assertPlanIsPortable = (plan: AutostartPlan): void => {
   if (unsafe !== null) {
     throw new UnsafeAutostartPlanError(
       `refusing to write an autostart manifest: program ${unsafe}`,
+    );
+  }
+  // Costs nothing and does not touch the roots: without it the basename check above is decided by
+  // whatever PATH the unit resolves under -- and the plan carries that PATH in `environment`.
+  const program = plan.program[0];
+  if (program === undefined || !program.startsWith('/')) {
+    throw new UnsafeAutostartPlanError(
+      `refusing to write an autostart manifest: program must be an absolute path, not ${JSON.stringify(program ?? null)}`,
     );
   }
 };
@@ -259,7 +309,9 @@ export const createManifestAutostart = (host: ManifestHost): AutostartContract =
       assertPlanIsPortable(plan);
       const path = host.pathFor(plan.unit_id);
       const body = host.render(plan);
-      const wrote = host.read(path) !== body;
+      const existing = host.read(path);
+      assertNotForeign(path, existing);
+      const wrote = existing !== body;
       if (wrote) host.write(path, body);
       return {
         manifest_path: path,
@@ -276,6 +328,7 @@ export const createManifestAutostart = (host: ManifestHost): AutostartContract =
       const path = host.pathFor(plan.unit_id);
       const body = host.render(plan);
       const before = host.read(path);
+      assertNotForeign(path, before);
       const actions: string[] = [];
       if (before !== body) {
         host.write(path, body);

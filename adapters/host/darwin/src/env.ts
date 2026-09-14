@@ -10,10 +10,12 @@
  * It catches an agent that adds a direct `launchctl load` line, which is the realistic accident and
  * is worth catching. It is not a sandbox: the choke point necessarily passes `tmux` and `osascript`
  * — a process launcher and a script interpreter — so anything reached one indirection down was never
- * in its view. `refuseSessionCommand` closes the one-step laundering through a session command
- * (`sh -c 'launchctl …'`, which `guard` saw only as `tmux`); an interpreter that can open a socket
- * is still outside what any argv check can reach. An earlier version of this comment called the
- * deny-list "an enforceable promise", which is the kind of sentence that stops people looking.
+ * in its view. `refuseSessionCommand` refuses the OBVIOUS launders through a session command -- a
+ * shell as argv[0], a one-element command the backend hands to a shell, an owner-run binary named
+ * directly. It is an accident-catcher, not a boundary: an adversary who wants a deny-listed binary
+ * has other routes. Earlier versions of this comment called the deny-list "an enforceable promise"
+ * and then claimed it "closes the one-step laundering" -- a security review measured both false.
+ * That is the kind of sentence that stops people looking, which is why this one runs long.
  */
 import { spawnSync } from 'node:child_process';
 import {

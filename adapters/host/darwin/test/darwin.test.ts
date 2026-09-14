@@ -217,7 +217,15 @@ describe('a caller-supplied command cannot reconfigure the session backend', () 
 });
 
 describe('an autostart plan cannot write outside the login-agent directory', () => {
-  const adapter = () => createDarwinHostAdapter(env()).autostart_contract();
+  // `env()`'s readFile returns a constant for EVERY path, which now reads as "a file is already
+  // there, and we did not write it". An empty login-agent directory is what these tests mean.
+  const empty = (): DarwinEnv =>
+    env({
+      readFile: () => {
+        throw new Error('no such file');
+      },
+    });
+  const adapter = () => createDarwinHostAdapter(empty()).autostart_contract();
   /**
    * PLAN above logs to `/Users/owner/logs`, outside the single allow root, and is now refused.
    * That is the new rule rather than a broken fixture: `allow_roots` is the filesystem scope this
@@ -260,5 +268,16 @@ describe('an autostart plan cannot write outside the login-agent directory', () 
     expect(result.manifest_path).toBe(
       '/Users/owner/Library/LaunchAgents/placeholder.autostart.plist',
     );
+  });
+
+  it('folds case on the owner-run deny-list, because the volume does', async () => {
+    for (const program of [
+      ['/usr/bin/SUDO', 'x'],
+      ['/BIN/SH', '-c', 'x'],
+    ]) {
+      await expect(adapter().install({ ...INSTALLABLE, program })).rejects.toThrow(
+        /owner-run only|run another program/,
+      );
+    }
   });
 });

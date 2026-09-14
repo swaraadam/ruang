@@ -7,7 +7,12 @@
  * 'unknown'`, `confirmed_at: null` — because a double more confident than the thing it stands in
  * for tests the wrong contract.
  */
-import { createManifestAutostart, createPathPolicy, refuseSessionCommand } from './shared.js';
+import {
+  MANAGED_MARKER,
+  createManifestAutostart,
+  createPathPolicy,
+  refuseSessionCommand,
+} from './shared.js';
 import type {
   HealthProbe,
   HostAdapter,
@@ -160,7 +165,7 @@ export const createHostDouble = (options: HostDoubleOptions = {}): HostDouble =>
     autostart_contract: () =>
       createManifestAutostart({
         pathFor: (unit_id) => `/double/autostart/${unit_id}`,
-        render: (plan) => JSON.stringify(plan),
+        render: (plan) => JSON.stringify({ marker: MANAGED_MARKER, ...plan }),
         procedureFor,
         read: (path) => manifests.get(path) ?? null,
         write: (path, body) => void manifests.set(path, body),

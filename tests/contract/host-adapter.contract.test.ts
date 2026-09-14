@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { PAYLOAD_VALIDATORS } from '@internal/protocol';
 import {
   HOST_ADAPTER_METHODS,
+  MANAGED_MARKER,
   PROBE_KINDS,
   createHostDouble,
   createPathPolicy,
@@ -33,7 +34,10 @@ type Fixture = {
   readonly prefix_trap: string;
   /** Every process the adapter launched. Autostart must leave it empty. */
   readonly spawned: () => readonly (readonly string[])[];
+  /** Edit a manifest THIS adapter wrote: divergent, and repairable. */
   tamper(unit_id: string): void;
+  /** Put a file this adapter never wrote at the path a unit id composes to. Not repairable. */
+  plantForeign(unit_id: string): void;
   /** A second adapter over the same host state: what "the gateway restarted" means here. */
   restart(): HostAdapter;
 };
@@ -72,7 +76,15 @@ const doubleFixture = (scenario: Scenario = {}): Fixture => {
     escaping_symlink: '/allowed/link/passwd',
     prefix_trap: '/allowedx/project',
     spawned: () => [],
-    tamper: (unit_id) => void manifests.set(`/double/autostart/${unit_id}`, 'tampered'),
+    // Keeps the marker: this is OUR manifest, edited. A body with no marker is a different
+    // situation and gets its own fixture below.
+    tamper: (unit_id) =>
+      void manifests.set(
+        `/double/autostart/${unit_id}`,
+        `{"marker":"${MANAGED_MARKER}","tampered":true}`,
+      ),
+    plantForeign: (unit_id) =>
+      void manifests.set(`/double/autostart/${unit_id}`, '{"someone":"else"}'),
     restart: build,
   };
 };
@@ -146,7 +158,17 @@ const darwinFixture = (scenario: Scenario = {}): Fixture => {
     escaping_symlink: `${ROOT}/link/passwd`,
     prefix_trap: `${ROOT}x/app`,
     spawned: () => spawned,
-    tamper: (unit) => void files.set(`/Users/owner/Library/LaunchAgents/${unit}.plist`, 'tampered'),
+    // Keeps the marker: OUR manifest, edited. Marker-less is a different case, below.
+    tamper: (unit) =>
+      void files.set(
+        `/Users/owner/Library/LaunchAgents/${unit}.plist`,
+        `<!-- ${MANAGED_MARKER} --> tampered`,
+      ),
+    plantForeign: (unit) =>
+      void files.set(
+        `/Users/owner/Library/LaunchAgents/${unit}.plist`,
+        '<plist><dict><key>Label</key><string>com.someone.else</string></dict></plist>',
+      ),
     restart: () => createDarwinHostAdapter(env),
   };
 };
@@ -377,6 +399,84 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
       expect((await attach(f, null)).outcome).toBe('created');
       const second = await attach(f, ['sh', '-c', 'echo anything']);
       expect(second.outcome).toBe('refused');
+    });
+  });
+
+  /**
+   * From the security re-review of the C1/C2 fix. Both bypasses below were MEASURED against the
+   * real backend before being closed, which is why they are asserted rather than reasoned about.
+   */
+  describe('the command deny-list has no shift key and no shell', () => {
+    const attach = (f: Fixture, command: readonly string[]) =>
+      f.adapter
+        .session_manager()
+        .attach({ session_id: 'attempt-1', working_directory: f.inside, command });
+
+    it('folds case, because the volume it runs on does', async () => {
+      // /bin/SH is /bin/sh on a case-insensitive boot volume, and this codebase already knows that
+      // -- `createPathPolicy` is constructed with caseInsensitive: true a few lines away. Asserted
+      // on a LAUNCHER rather than an owner-run binary, because the host's deny-list is the host's:
+      // the double is deliberately given an empty one. `/usr/bin/SUDO` is covered in the Darwin
+      // tests, where GUARDED_BINARIES is the list actually in play.
+      const attachment = await attach(makeFixture(), ['/bin/SH', '-c', 'echo x']);
+      expect(attachment.outcome).toBe('refused');
+    });
+
+    it('refuses a one-element command carrying shell syntax, which the backend would interpret', async () => {
+      // Measured: a single argument is handed to a shell even after `--`, so the whole string is a
+      // script and its "basename" is the entire command line -- matching no deny-list entry while
+      // running all of it. Zero indirections, not one.
+      const attachment = await attach(makeFixture(), ['launchctl list | head -3 > proof']);
+      expect(attachment.outcome).toBe('refused');
+      expect(attachment.refused_reason).toMatch(/handed to a shell/);
+    });
+
+    it('still allows a one-element command that is only a program', async () => {
+      const attachment = await attach(makeFixture(), ['/usr/local/bin/agent']);
+      expect(attachment.outcome).not.toBe('refused');
+    });
+  });
+
+  describe('the login-agent directory belongs to everyone', () => {
+    it('refuses to overwrite a manifest this control plane did not write', async () => {
+      const f = makeFixture();
+      const autostart = f.adapter.autostart_contract();
+      f.plantForeign('com.someone.else.agent');
+      // A bare identifier is a valid unit id AND somebody else's agent name. Overwriting destroys
+      // content `rm` cannot restore, which would also falsify the procedure's own reversibility
+      // claim.
+      await expect(autostart.install(plan('com.someone.else.agent', f.root))).rejects.toThrow(
+        /did not write it/,
+      );
+      await expect(autostart.repair(plan('com.someone.else.agent', f.root))).rejects.toThrow(
+        /did not write it/,
+      );
+    });
+
+    it('still repairs a manifest it did write, however mangled', async () => {
+      const f = makeFixture();
+      const autostart = f.adapter.autostart_contract();
+      await autostart.install(plan('ours.unit', f.root));
+      f.tamper('ours.unit');
+      const repair = await autostart.repair(plan('ours.unit', f.root));
+      expect(repair.actions_taken.length).toBe(1);
+      expect(repair.status.state).toBe('manifest_current');
+    });
+
+    it('refuses a program that is not an absolute path, so PATH cannot decide what ran', async () => {
+      const f = makeFixture();
+      await expect(
+        f.adapter.autostart_contract().install({ ...plan('ok.unit', f.root), program: ['agent'] }),
+      ).rejects.toThrow(/absolute path/);
+    });
+
+    it('writes the marker into every manifest it authors', async () => {
+      const f = makeFixture();
+      const result = await f.adapter.autostart_contract().install(plan('ok.unit', f.root));
+      expect(result.wrote).toBe(true);
+      const status = await f.adapter.autostart_contract().status('ok.unit');
+      expect(status.state).toBe('unknown');
+      expect(status.manifest_digest).not.toBeNull();
     });
   });
 

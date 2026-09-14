@@ -4,6 +4,7 @@
  * register — and therefore `registration: 'unknown'` — is `createManifestAutostart`'s.
  */
 import {
+  MANAGED_MARKER,
   UnsafeAutostartPlanError,
   UnsafeUnitIdError,
   assertSafeUnitId,
@@ -76,6 +77,7 @@ export const renderManifest = (plan: AutostartPlan): string =>
 <dict>
   <key>Label</key>
   <string>${xml(plan.unit_id)}</string>
+  <!-- ${MANAGED_MARKER}: present so this control plane will not overwrite a unit it did not write -->
   <key>ProgramArguments</key>
   <array>
 ${plan.program.map((a) => `    <string>${xml(a)}</string>`).join('\n')}
