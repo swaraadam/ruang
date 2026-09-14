@@ -136,7 +136,7 @@ describe('darwin specifics of the session and path facets', () => {
  * being fixed: tmux 3.7c placed a session in /private/etc when the command carried a second `-c`,
  * and a traversing unit id composed a path outside the login-agent directory.
  */
-describe('a caller-supplied command cannot reconfigure the session backend', () => {
+describe('refusing the caller-supplied commands that would reconfigure the backend', () => {
   /** The backend has no session until `new-session` runs. A fake that always lists one would send
    * every attach down the reattach path, and the creation argv -- the thing under test -- would
    * never be built. */

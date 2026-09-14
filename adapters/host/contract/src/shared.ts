@@ -99,24 +99,41 @@ export const createPathPolicy = (options: PathPolicyOptions): PathPolicy => {
 };
 
 /**
- * argv[0]s whose entire job is to run something else.
+ * The one folding rule. Both sides of every comparison below pass through it, and so does the host
+ * adapter's own launch guard, so a folding fix lands once.
  *
- * A deny-list that inspects argv[0] is exactly one indirection deep: `sh -c '<anything>'` satisfies
- * it while running the very thing it forbids. Refusing the launcher is what makes the deny-list mean
- * what it says.
+ * `toLowerCase()` is not case FOLDING, and the difference showed: U+017F LATIN SMALL LETTER LONG S
+ * is already lowercase, so `'\u017Fh'.toLowerCase()` is `'\u017Fh'` -- a name the filesystem opens as
+ * `sh` that the comparison never saw. NFKC maps the compatibility spellings of an ASCII character
+ * onto that character (long s, fullwidth forms, ligatures), and it maps the fullwidth solidus onto
+ * `/`, which is why it runs BEFORE the basename split rather than after it.
  *
- * BE PRECISE ABOUT ITS REACH. This is NOT a sandbox and NOT a privilege boundary. A session command
- * is an arbitrary-execution surface by design: a provider agent runs there, and an interpreter that
- * can open a socket can start a process. This refuses the OBVIOUS launders -- a shell as argv[0], a
- * one-element command the backend would hand to a shell, an owner-run binary named directly -- and
- * an adversary who wants a deny-listed binary has other routes. It catches accidents. Anything
- * stronger has to live in Seam C, over who may supply a `SessionSpec.command` at all.
+ * The result is a string to COMPARE. Nothing opens a file by it; callers keep the original.
  */
-const fold = (v: string): string => v.toLowerCase();
+export const foldProgramName = (program: string): string =>
+  (program.normalize('NFKC').split('/').pop() ?? '').toLowerCase();
+
+/**
+ * Every name this file compares against is an ASCII identifier, so ASCII is the comparison's whole
+ * domain. A folded name still outside it cannot equal an entry and cannot be shown to differ from
+ * one either: NFKC does not reach every lookalike and cannot -- `\u0130` folds to `i` plus a combining
+ * dot, so `f\u0130sh` never becomes `fish`. Refusing is the fail-closed answer (invariant 4); calling
+ * it acceptable would report a decision that was never made (invariant 1). The cost is a false
+ * refusal for a binary whose own name is non-ASCII, which the message names precisely.
+ */
+const outsideAscii = (name: string): boolean =>
+  [...name].some((ch) => (ch.codePointAt(0) ?? 0) > 0x7f);
 
 /** Anything a shell would treat as more than a filename. */
 const SHELL_SYNTAX = /[\s;|&<>$`(){}[\]*?~!#\\'"]/;
 
+/**
+ * argv[0]s whose entire job is to run something else.
+ *
+ * A deny-list that inspects argv[0] is exactly one indirection deep: `sh -c '<anything>'` satisfies
+ * it while running the very thing it forbids. Refusing the launcher is what makes the deny-list mean
+ * what it says -- within the reach the contract below sets, and no further.
+ */
 export const COMMAND_LAUNCHERS: readonly string[] = [
   'sh',
   'bash',
@@ -143,7 +160,31 @@ export const COMMAND_LAUNCHERS: readonly string[] = [
  *
  * `guarded` is the host's own deny-list: this contract cannot know that `launchctl` is the dangerous
  * name on one platform and `systemctl` on another, so the host supplies it and the rule lives here
- * where both the real adapter and the double must obey it.
+ * where both the real adapter and the double must obey it. Its entries must be ASCII identifiers --
+ * ASCII is the whole domain of the comparison, see `outsideAscii`.
+ *
+ * ## THE REACH OF THIS GUARD IS A DECIDED CONTRACT, NOT THE AUTHOR'S CAVEAT
+ *
+ * Owner decision of 2026-09-14, closing the security review of this file: this guard is NOT a
+ * security control, and no caller may treat it as one. Blueprint §12.1 puts the privilege boundary
+ * in the credential broker and the capability limits; a deny-list over argv[0] is neither of those
+ * and cannot be made into one. The decision binds in both directions.
+ *
+ * What it promises: it catches ACCIDENTS, with a legible reason. A shell as argv[0], a one-element
+ * command the backend would hand to a shell, an owner-run binary named directly, any compatibility
+ * spelling of one of those. Those are the shapes an unattended agent produces by mistake, and a
+ * comparison that misses one of them is simply WRONG -- a correctness bug, which is what the folding
+ * rule in `foldProgramName` fixes.
+ *
+ * What it does not promise: resistance to anyone TRYING. A session command is an arbitrary-execution
+ * surface by design -- a provider agent runs there, and an interpreter that can open a socket can
+ * start a process -- so an adversary who wants a deny-listed binary has other routes, and closing
+ * one more of them here would not change that. Who may supply a `SessionSpec.command` at all is Seam
+ * C's question (CLAUDE.md §4), and the answer belongs there rather than in a longer list here.
+ *
+ * So: fix a comparison that is wrong, and do not grow this into a boundary it cannot be. Nothing in
+ * this repository -- code, comment, test name or error message -- may cite this function as a
+ * privilege check.
  */
 export const refuseSessionCommand = (
   command: readonly string[] | null | undefined,
@@ -165,12 +206,20 @@ export const refuseSessionCommand = (
   // session in /private/etc, discarding the canonicalized directory entirely.
   if (program.startsWith('-')) return `a command may not begin with an option: '${program}'`;
   // Folded, because the boot volume this runs on is case-insensitive and `/bin/SH` is `/bin/sh`
-  // there. A case-sensitive comparison against a case-insensitive filesystem is a deny-list with a
-  // shift key for a bypass -- measured on both `/bin/SH` and `/usr/bin/SUDO`.
-  const base = fold(program.split('/').pop() ?? '');
-  if (guarded.some((g) => fold(g) === base))
+  // there. A comparison decided by code points, against a filesystem that opens both names as one
+  // file, is a deny-list with a shift key for a bypass -- measured on `/bin/SH` and `/usr/bin/SUDO`,
+  // and `'\u017Fh'` is the same bug one step further out (see `foldProgramName`).
+  const base = foldProgramName(program);
+  if (outsideAscii(base)) {
+    return (
+      `program name ${JSON.stringify(base)} is still outside ASCII after folding, and every name ` +
+      'this guard compares against is an ASCII identifier, so the comparison has no answer and ' +
+      'this refuses rather than guessing at one'
+    );
+  }
+  if (guarded.some((g) => foldProgramName(g) === base))
     return `'${base}' is owner-run only and may not be a session command`;
-  if (COMMAND_LAUNCHERS.some((l) => fold(l) === base))
+  if (COMMAND_LAUNCHERS.some((l) => foldProgramName(l) === base))
     return `'${base}' exists to run another program, which would leave the deny-list one indirection away from what actually executes`;
   return null;
 };

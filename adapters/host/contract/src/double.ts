@@ -80,8 +80,8 @@ export const createHostDouble = (options: HostDoubleOptions = {}): HostDouble =>
   const procedureFor = (unit_id: string): OwnerProcedure => ({
     title: `Register autostart unit ${unit_id}`,
     why_owner_runs_it:
-      'This adapter writes the manifest and stops. Registering it is an owner act so that nothing ' +
-      'in an unattended run can grant itself a start-up foothold.',
+      'This adapter writes the manifest and stops. Registering it is an owner act, so granting a ' +
+      'login-time foothold is never a step an unattended run takes on its own.',
     steps: [
       { instruction: `register ${unit_id} with the host service manager`, is_command: false },
     ],

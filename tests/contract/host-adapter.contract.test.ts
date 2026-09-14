@@ -319,8 +319,9 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
       await autostart.install(plan(unit, f.root));
       await autostart.status(unit);
       await autostart.repair(plan(unit, f.root));
-      // Stronger than "never runs launchctl": autostart spawns nothing, so there is no argv to
-      // audit and no way to add a load step without failing here first.
+      // Stronger than "never runs launchctl": autostart spawns nothing at all, so a load step added
+      // anywhere on this path fails this assertion instead of needing an argv to be audited. A
+      // statement about this code path, not about what some other process could do.
       expect(f.spawned()).toEqual([]);
     });
 
@@ -370,7 +371,7 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
    * in CI and only discover on the real host. The substrate-specific halves -- tmux's `--` and the
    * LaunchAgents path -- stay in the Darwin tests, where they belong.
    */
-  describe('a caller-supplied command cannot reconfigure the session backend', () => {
+  describe('refusing the caller-supplied commands that would reconfigure the backend', () => {
     const attach = (fixture: Fixture, command: readonly string[] | null) =>
       fixture.adapter.session_manager().attach({
         session_id: 'attempt-1',
@@ -403,10 +404,14 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
   });
 
   /**
-   * From the security re-review of the C1/C2 fix. Both bypasses below were MEASURED against the
-   * real backend before being closed, which is why they are asserted rather than reasoned about.
+   * Comparison correctness, not adversary resistance — the guard's reach is fixed by the contract on
+   * `refuseSessionCommand` (owner decision of 2026-09-14, blueprint §12.1) and nothing here widens
+   * it. What these assert is narrower and checkable: the comparison must agree with the thing that
+   * actually opens the file. The first two shapes were MEASURED against the real backend before
+   * being closed; the folding cases below are the same bug reached through Unicode instead of the
+   * shift key.
    */
-  describe('the command deny-list has no shift key and no shell', () => {
+  describe('the command deny-list compares folded names, never raw ones', () => {
     const attach = (f: Fixture, command: readonly string[]) =>
       f.adapter
         .session_manager()
@@ -434,6 +439,43 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
     it('still allows a one-element command that is only a program', async () => {
       const attachment = await attach(makeFixture(), ['/usr/local/bin/agent']);
       expect(attachment.outcome).not.toBe('refused');
+    });
+
+    /**
+     * `toLowerCase()` is not case FOLDING, and the gap is not academic: U+017F LATIN SMALL LETTER
+     * LONG S is ALREADY lowercase, so `'\u017Fh'.toLowerCase()` is `'\u017Fh'` and the comparison
+     * never fired. NFKC maps the compatibility spellings of an ASCII letter onto that letter first
+     * -- long s, the fullwidth forms, the ligatures -- and it maps the fullwidth solidus onto `/`,
+     * so a separator lookalike cannot hide the basename from the split either.
+     */
+    it.each([
+      ['a long s, already lowercase and so untouched by toLowerCase()', '\u017Fh'],
+      ['a fullwidth letter', '\uFF53h'],
+      ['a fullwidth solidus, which a raw split does not read as a separator', '\uFF0Fbin\uFF0Fsh'],
+    ])('refuses the %s spelling of a launcher', async (_case, program) => {
+      const attachment = await attach(makeFixture(), [program, '-c', 'echo x']);
+      expect(attachment.outcome).toBe('refused');
+    });
+
+    it('refuses a name it cannot compare instead of guessing at it (invariant 4)', async () => {
+      // NFKC does not reach every lookalike and cannot: `\u0130` folds to `i` plus a combining dot, so
+      // `f\u0130sh` never becomes `fish`. Every deny-list entry is an ASCII identifier, so a name still
+      // outside ASCII after folding is outside the comparison's DOMAIN -- and an undecidable
+      // comparison reported as "acceptable" is the guard claiming a decision it never made.
+      const attachment = await attach(makeFixture(), ['/bin/f\u0130sh']);
+      expect(attachment.outcome).toBe('refused');
+      expect(attachment.refused_reason).toMatch(/outside ASCII/);
+    });
+
+    it('leaves plain ASCII where it was: folding is not a new refusal', async () => {
+      // The regression half. Neither answer may move: an ordinary program still attaches, and an
+      // uppercase launcher is still refused for being a launcher.
+      expect((await attach(makeFixture(), ['/usr/local/bin/agent', '--serve'])).outcome).not.toBe(
+        'refused',
+      );
+      const upper = await attach(makeFixture(), ['/bin/BASH', '-c', 'x']);
+      expect(upper.outcome).toBe('refused');
+      expect(upper.refused_reason).toMatch(/exists to run another program/);
     });
   });
 
@@ -563,5 +605,14 @@ describe('invariant 4 at the edges of the shared implementation', () => {
 
   it.each(GUARDED_BINARIES)('the one choke point refuses to execute %s', (binary) => {
     expect(() => guard([`/usr/bin/${binary}`, 'anything'])).toThrow(/owner-run only/);
+  });
+
+  it('folds the name at that choke point too, by the same rule as the session deny-list', () => {
+    // The sibling comparison had the same correctness bug: an exact match decided by code points,
+    // against a filesystem that opens `/usr/bin/LAUNCHCTL` and `/usr/bin/launchctl` as one file.
+    // One folding rule, used on both sides of both comparisons, so a fix lands once.
+    expect(() => guard(['/usr/bin/LAUNCHCTL', 'load'])).toThrow(/owner-run only/);
+    expect(() => guard(['\uFF53udo', '-v'])).toThrow(/owner-run only/);
+    expect(() => guard(['/usr/bin/tmux', 'list-sessions'])).not.toThrow();
   });
 });

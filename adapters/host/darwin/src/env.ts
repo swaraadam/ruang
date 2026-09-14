@@ -10,12 +10,15 @@
  * It catches an agent that adds a direct `launchctl load` line, which is the realistic accident and
  * is worth catching. It is not a sandbox: the choke point necessarily passes `tmux` and `osascript`
  * — a process launcher and a script interpreter — so anything reached one indirection down was never
- * in its view. `refuseSessionCommand` refuses the OBVIOUS launders through a session command -- a
- * shell as argv[0], a one-element command the backend hands to a shell, an owner-run binary named
- * directly. It is an accident-catcher, not a boundary: an adversary who wants a deny-listed binary
- * has other routes. Earlier versions of this comment called the deny-list "an enforceable promise"
- * and then claimed it "closes the one-step laundering" -- a security review measured both false.
- * That is the kind of sentence that stops people looking, which is why this one runs long.
+ * in its view.
+ *
+ * That reach is a DECIDED CONTRACT, not this author's caveat. Owner decision of 2026-09-14 and
+ * blueprint §12.1: the privilege boundary is the credential broker and the capability limits, and an
+ * argv deny-list is neither. The binding statement lives on `refuseSessionCommand` in the host
+ * contract; read it before adding anything here, and do not restate it as a stronger claim. Earlier
+ * versions of this comment called the deny-list "an enforceable promise" and then claimed it "closes
+ * the one-step laundering" -- a security review measured both false. That is the kind of sentence
+ * that stops people looking, which is why this one runs long.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -28,6 +31,7 @@ import {
 } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname } from 'node:path';
+import { foldProgramName } from '@internal/host-contract';
 
 export type CommandResult = {
   readonly code: number | null;
@@ -54,15 +58,23 @@ export type DarwinEnv = {
 /**
  * CLAUDE.md §8 and the P0-07 acceptance line: this adapter writes the autostart manifest and
  * prints the procedure; it never runs the service manager itself. The deny-list turns that from a
- * convention into a throw at the single choke point every launch goes through, so an unattended
- * agent that later "just adds a load step" fails a test instead of gaining a start-up foothold.
+ * convention into a throw at the one choke point EVERY LAUNCH THIS ADAPTER MAKES goes through, so an
+ * agent that later "just adds a load step" here fails a test rather than shipping it. It says
+ * nothing about a process started by any other route — see the header.
+ *
+ * Every entry is a lowercase ASCII identifier, which is what lets `foldProgramName` decide the
+ * comparison; `GUARDED_BINARIES` and `refuseSessionCommand`'s `guarded` are the same list.
  */
 export const GUARDED_BINARIES = ['launchctl', 'sudo', 'defaults', 'systemsetup', 'csrutil'];
 
 export class GuardedCommandError extends Error {}
 
 export const guard = (argv: readonly string[]): void => {
-  const binary = (argv[0] ?? '').split('/').pop() ?? '';
+  // Folded by the contract's rule rather than compared raw. This is the sibling of the session
+  // deny-list and had the same correctness bug: a comparison decided by code points, against a
+  // volume that opens `/usr/bin/LAUNCHCTL` and `/usr/bin/launchctl` as one file. One rule, imported
+  // rather than re-spelled, so the next folding fix lands in one place.
+  const binary = foldProgramName(argv[0] ?? '');
   if (GUARDED_BINARIES.includes(binary)) {
     throw new GuardedCommandError(
       `${binary} is owner-run only: this adapter prints the procedure, it never executes it`,
