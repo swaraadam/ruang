@@ -884,3 +884,52 @@ issues:
       - "a normal review still passes unchanged -- the fix must not add a failure mode of its own"
       - "the three observed cases are re-checked against the fix and the results recorded"
       - "PR 60 is the worked example: changes-requested and pass on the identical SHA, 3h56m apart, the second after a re-run"
+
+  - id: M-15
+    title: "A second review workflow reports SUCCESS on every PR and posts no verdict"
+    phase: 0
+    agent: contract-test-engineer
+    size: S
+    depends_on: [P0-01]
+    refs: "16.1, 16.2"
+    goal: |
+      Two workflows review every PR, and only one of them carries a verdict.
+
+      `claude-review.yml` (workflow "Claude PR review", job `review`) is the real gate: it runs the
+      reviewer and then proves, in the SAME job and the NEXT step, that a SHA-bound marker from
+      claude[bot] exists for the head it is verifying. `claude-code-review.yml` (workflow "Claude Code
+      Review", job `claude-review`) independently runs the generic `/code-review` plugin with only
+      `create_inline_comment` allowed. It cannot call `gh pr review`, so it can never emit a marker,
+      and it has no proof step -- so it reports SUCCESS on every PR regardless of what it found.
+
+      That green is the defect. It is the same shape as M-01: a check that decided nothing must not
+      report success. The two check names sit adjacent in the PR check list as `claude-review`
+      (always green, decides nothing) and `review` (the actual verdict), and the green one is named
+      almost exactly like the marker string `claude-review: pass`. On 2026-09-12 all three of PRs 70,
+      71 and 72 showed `claude-review SUCCESS` beside a red `review`, and the pairing was read as the
+      marker-posting reviewer finishing late and losing a race to the proof step.
+
+      IT IS NOT A RACE, and this entry exists partly to stop that hypothesis being re-filed. Measured
+      on the attempt-1 logs of runs 34710013508 (PR 70), 34710218114 (PR 72) and 34710271725 (PR 71):
+      the `Prove the review actually ran` step started and failed within ONE second in all three, and
+      in all three it printed "CHANGES REQUESTED: claude[bot] found blocking findings (B1/B2)" for the
+      exact head SHA. The marker was present and found immediately. A structural race is not available
+      here either: unlike guardrails.yml, which fires on `synchronize` as a separate workflow observing
+      another workflow's output and therefore genuinely raced (M-14), the proof step in claude-review.yml
+      runs after the reviewer step inside one job. It cannot start early. Adding M-14's polling to it
+      would only delay every correct rejection by the length of the poll, and would invite a later
+      "fix" that treats an absent marker as a pass -- which is the one failure this gate exists to
+      prevent.
+
+      The 12-14 minutes the duplicate takes is also paid on every push, for a second full-repo review
+      whose findings nothing gates on.
+    scope:
+      - "decide whether claude-code-review.yml is wanted at all: it duplicates the reviewer that already runs, at full token cost per push"
+      - "if it is kept, it must not report SUCCESS for a run that reached no verdict -- M-01's rule applies to it too"
+      - "if it is kept, rename the job so it is not confusable with the `review` check or the `claude-review: pass` marker string"
+      - "owner-only path: .github/workflows/** is denied to agents by .claude/settings.json, so this is filed and parked, never self-applied"
+    acceptance:
+      - "the PR check list contains exactly one check that can be mistaken for the verdict, and it is the one that carries it"
+      - "no check reports SUCCESS for a review that produced no verdict"
+      - "a changes-requested PR shows no green review-shaped check anywhere in its list"
+      - "the no-race finding above is preserved in the record so the polling fix is not re-proposed"
