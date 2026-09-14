@@ -3,6 +3,8 @@
   "compilerOptions": { "outDir": "dist", "types": ["node"] },
   "include": ["**/*.ts"],
   "references": [
+    { "path": "../adapters/host/contract" },
+    { "path": "../adapters/host/darwin" },
     { "path": "../packages/persistence" },
     { "path": "../packages/protocol" },
     { "path": "../tsconfig.scripts.json" }

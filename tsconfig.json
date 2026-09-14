@@ -3,6 +3,7 @@
   "references": [
     { "path": "adapters/domain/assets" },
     { "path": "adapters/domain/code" },
+    { "path": "adapters/host/contract" },
     { "path": "adapters/host/darwin" },
     { "path": "adapters/provider/claude" },
     { "path": "adapters/provider/codex" },
