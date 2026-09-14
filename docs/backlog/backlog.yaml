@@ -132,6 +132,13 @@ issues:
       not policy logic, and were not in view when the number was set. The author measured the overage,
       offered a four-way re-cut, declined to shrink fail-closed mechanics to fit a line count, and
       applied needs-owner rather than proceeding.
+
+      EXTENDED by the owner on 2026-09-14, same issue: the security review's M2 was directed to be
+      fixed before landing, so the waiver covers that fix too -- head 8584ae7, +183 lines (the
+      delegateReaches containment check and five tests), ~2393 total. Recorded because a waiver
+      mirrored here that stops at the original grant understates what was actually waived, and
+      backlog.yaml is read by people who do not open the issue. The issue comment remains
+      authoritative; this is a mirror, not a second grant.
     budget_reason: "a capability matrix is one repeating declarative row per capability; the logic is small"
     refs: "7.1, 7.2, 7.3"
     goal: Authorization as data, correct on day one with exactly one human owner.
