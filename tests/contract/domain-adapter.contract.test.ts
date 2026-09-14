@@ -13,6 +13,14 @@ import type { Sandbox } from '@internal/domain';
 import { type ChangeSet, isAnchor, isChangeSet, isRenderableChange } from '@internal/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { codeHarness } from './code-harness.js';
+
+/** Every regular file at or under a path, so an assertion need not know the adapter's layout. */
+const filesUnder = (path: string): readonly string[] => {
+  const stats = statSync(path, { throwIfNoEntry: false });
+  if (stats === undefined) return [];
+  if (!stats.isDirectory()) return [path];
+  return readdirSync(path).flatMap((name) => filesUnder(join(path, name)));
+};
 import type { ContractSubject } from './harness.js';
 
 const HARNESSES = [codeHarness];
@@ -122,6 +130,28 @@ describe.each(HARNESSES)('domain adapter contract: $name', (harness) => {
       // The work is gone from the sandbox, so it has to be somewhere: a forced close that retained
       // nothing would be exactly the silent destruction §10.4 exists to prevent.
       expect(forced.retained_artifacts.length).toBeGreaterThan(0);
+    });
+
+    it('§10.4: retained means the bytes survived, not that a filename was written down', async () => {
+      const sandbox = await opened();
+      const must_survive = s.leaveUnrecordableWork(sandbox);
+      if (must_survive.length === 0) return; // an adapter whose records carry every byte
+
+      const forced = await s.adapter.close_sandbox(sandbox, { ...retain, force: true });
+      expect(forced.closed).toBe(true);
+
+      // Deliberately indifferent to layout: the contract is that the content is recoverable, not
+      // that it lands anywhere in particular. Counting artifacts is what the test above does, and
+      // counting is exactly what let a record of NAMES pass as a record of work -- a forced close
+      // reporting `closed: true` with `retained_artifacts` set, for content that was only ever
+      // listed. Invariant 1: this is the record someone reads before accepting the loss.
+      const kept = forced.retained_artifacts.flatMap(filesUnder).map((f) => readFileSync(f));
+      for (const resource of must_survive) {
+        const found = kept.some(
+          (bytes) => Buffer.compare(bytes, Buffer.from(resource.bytes)) === 0,
+        );
+        expect(found, `${resource.label} was not recoverable from retained_artifacts`).toBe(true);
+      }
     });
   });
 

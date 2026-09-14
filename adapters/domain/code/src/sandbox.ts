@@ -4,8 +4,8 @@
  * longer find would be one whose dirty work it silently assumes away — invariant 7 says one
  * authoritative home per fact, and the filesystem is that home for this one.
  */
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 // prettier-ignore
 import type { Basis, ClosePolicy, SafetyRecord, Sandbox, SandboxInspection } from '@internal/domain';
 import { basisStaleness } from './basis.js';
@@ -140,4 +140,43 @@ const rescueUnsavedWork = async (
     `${patch.stdout}\n--- resources present only in the sandbox ---\n${others.stdout}`,
     'utf8',
   );
+
+  // The record above is TEXT, and loses two whole classes of content on its own: a resource never
+  // added to the index appears only as a *name* in that listing, and a changed binary renders as
+  // "Binary files ... differ". The caller is about to force a teardown, so those bytes have no
+  // other home -- and `retained_artifacts` would still report the work as retained.
+  //
+  // That is invariant 1 in the one record someone reads before deciding a sandbox is safe to
+  // destroy, so the bytes are copied rather than described. Named for what it holds, not for how
+  // the substrate classified it: a reader wants the resource back, not a lesson about index state.
+  for (const rel of await unrecordedByPatch(path)) {
+    const from = join(path, rel);
+    // A deletion is already fully described by the patch, and has no bytes left to copy.
+    if (!existsSync(from)) continue;
+    const to = join(dir, 'unsaved-resources', rel);
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(from, to);
+  }
+};
+
+/**
+ * The resources whose *content* the patch does not carry: everything untracked, plus every changed
+ * resource the diff declined to render. `--numstat` marks the second kind with `-` in both count
+ * columns, which is the only place that distinction is reported without parsing the diff body.
+ */
+const unrecordedByPatch = async (path: string): Promise<readonly string[]> => {
+  // NUL-delimited: a path may contain a space, and `ls-files` would otherwise quote and escape it,
+  // producing a name that does not exist on disk.
+  const untracked = await runGit(path, ['ls-files', '--others', '--exclude-standard', '-z']);
+  const unrendered = await runGit(path, ['diff', '--numstat', 'HEAD']);
+  return [
+    ...new Set([
+      ...untracked.stdout.split('\0').filter((p) => p.length > 0),
+      ...unrendered.stdout
+        .split('\n')
+        .filter((l) => l.startsWith('-\t-\t'))
+        .map((l) => l.slice(4))
+        .filter((p) => p.length > 0),
+    ]),
+  ];
 };
