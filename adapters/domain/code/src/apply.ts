@@ -9,6 +9,7 @@ import type { ApplyOperation, ApplyPlan, ApplyPolicy, ApplyResult, BrokerOutcome
 import type { ChangeSet } from '@internal/protocol';
 import { existsSync } from 'node:fs';
 import { currentRef, UNRESOLVED_REF } from './basis.js';
+import { measureChangeSet } from './changes.js';
 import { isPathSafeId } from './paths.js';
 import { sandboxPath } from './sandbox.js';
 import { AdapterRefusal, type CodeAdapterOptions } from './surface.js';
@@ -38,22 +39,32 @@ const kindOf = (operation_id: string): OperationKind | null => {
  * a self-report is exactly that judgement. Counting the way `compute_change_set` counts leaves an
  * honest change set untouched and leaves a dishonest one nothing to buy.
  *
+ * Counting is not sufficient on its own, which is why `unmeasured` travels beside the number. A
+ * change set does not have to be dishonest to buy an unlimited apply: it only has to be shaped in a
+ * way the declared unit cannot count, and an actor who controls sandbox content chooses that. Six
+ * binary resources, fourteen megabytes, scored zero and planned cleanly under a budget of zero —
+ * self-report and measurement agreeing, on nothing.
+ *
  * Deliberately *not* `content_hash`. Verifying that would put a 64-bit, expressly non-cryptographic
  * digest under an apply decision, which `packages/protocol` asks be revisited by ADR before anyone
  * leans on it. Measuring needs neither the hash nor the ADR, so the note there stays true.
  */
-const measure = (change_set: ChangeSet): number =>
-  change_set.change_unit === 'files'
-    ? change_set.changes.length
-    : change_set.changes.reduce(
-        (n, c) => n + (c.kind === 'text_patch' ? c.added + c.removed : 0),
-        0,
-      );
+const measure = (
+  change_set: ChangeSet,
+): { readonly size: number; readonly unmeasured: readonly string[] } =>
+  measureChangeSet(change_set.changes, change_set.change_unit);
 
 // prettier-ignore
 export const applyPlan = async (o: CodeAdapterOptions, change_set: ChangeSet, policy: ApplyPolicy): Promise<ApplyPlan> => {
   const { change_unit } = change_set;
-  const change_size = measure(change_set);
+  const { size: change_size, unmeasured } = measure(change_set);
+  // A size that describes only part of a change set is not a size to decide on, and rounding the
+  // rest down to zero is the decision that a budget of zero admits anything. Invariant 4: refuse.
+  if (unmeasured.length > 0)
+    throw new AdapterRefusal(
+      'change_set_unmeasurable',
+      `${unmeasured.length} of ${change_set.changes.length} resource(s) here cannot be sized in ${change_unit}, so no budget decision can be made about this change set`,
+    );
   // A change set whose self-report disagrees with its own content describes two different reviews,
   // and every surface downstream would show the smaller one. Invariant 3: freeze, do not pick.
   if (change_size !== change_set.change_size)

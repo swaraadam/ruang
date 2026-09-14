@@ -52,7 +52,43 @@ const ENV = { GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat
  * stdout is read *as a path* therefore needs `-z` as well, and the callers that read one say so at
  * the call site. Three of them did not, which is the same defect three times.
  */
-const ALWAYS = ['--no-pager', '--no-optional-locks', '-c', 'core.quotePath=false'];
+const ALWAYS = [
+  '--no-pager',
+  '--no-optional-locks',
+  '-c',
+  'core.quotePath=false',
+  // Two settings turn a read into an execution, and both are reachable from the repository's own
+  // configuration -- which a sandbox shares with its source of record and cannot be pinned away.
+  // A command-line `-c` outranks every configuration file, so they are overridden by name here.
+  // `diff.external` is `GIT_EXTERNAL_DIFF` spelled differently; `core.fsmonitor` is reached by
+  // `inspect_sandbox`, a method §5.2.3 promises is non-mutating.
+  '-c',
+  'diff.external=',
+  '-c',
+  'core.fsmonitor=',
+];
+
+/**
+ * Options this package always passes to one subcommand, immediately after it.
+ *
+ * `-c` can only pin a key it can *name*, and a diff driver's name comes from the sandbox's own
+ * content: `.gitattributes` selects `diff=<name>` and the configuration supplies
+ * `diff.<name>.command` or `diff.<name>.textconv`, either of which runs a program on every read.
+ * The class is therefore closed per invocation instead of by name, and neither option changes what
+ * the answer means -- an external driver only decides how a difference is rendered, never whether
+ * there is one.
+ *
+ * `status` is the same file reaching the same methods from the other direction, and it is the
+ * destructive one: `status.showUntrackedFiles=no` made `inspect_sandbox` report a sandbox holding
+ * the only copy of a resource as having no unsaved changes, and `close_sandbox` -- *without*
+ * `force`, on the strength of that report -- destroyed it (§10.4, invariant 3). What a listing
+ * mentions is this package's question. What counts as work at all is still the source of record's,
+ * so its ignore rules are honoured exactly as they stand.
+ */
+const SUBCOMMAND_ALWAYS: ReadonlyMap<string, readonly string[]> = new Map([
+  ['diff', ['--no-ext-diff', '--no-textconv']],
+  ['status', ['--untracked-files=normal']],
+]);
 
 type Env = Record<string, string | undefined>;
 
@@ -63,7 +99,26 @@ type Env = Record<string, string | undefined>;
  */
 const inheritedEnv = (): Env => ({ ...process.env, ...ENV });
 
-/** Git reads configuration from files as well as from variables; both are pinned, not inherited. */
+/**
+ * Git reads configuration from files as well as from variables. The **user and system** files are
+ * pinned to nothing. The **repository's own** file is not pinned and cannot be: a sandbox shares it
+ * with its source of record, so `git config` run inside a sandbox changes what this package reads
+ * outside one, and it persists there after the sandbox is gone. What is done instead is to override
+ * the settings that turn a read into an execution, by name, at `ALWAYS` and `SUBCOMMAND_ALWAYS`
+ * above -- where nothing in a file can outrank them.
+ *
+ * Two channels in the same class stay open, named here rather than implied away, because closing
+ * either would change what a sandbox *contains* rather than how this package reads it:
+ *
+ *   - `filter.<name>.clean|smudge|process`, selected by an attribute in the content itself. No
+ *     option refuses it, the driver name is content, and it is how large-asset storage legitimately
+ *     works -- suppressing it would hand back resources that are not what the source of record says.
+ *   - Repository hooks, which fire when a sandbox is materialised or released. They are the owner's
+ *     own programs in the owner's own source of record, and the same storage integrations install
+ *     them, so refusing to run them would quietly change what a sandbox is.
+ *
+ * Both are the owner's decision, like the check environment above, and neither is settled here.
+ */
 const NO_CONFIG = '/dev/null';
 /** `PATH` decides which program runs and is this process's own identity, not a caller's input. */
 const INHERITED_BY_GIT = ['PATH', 'HOME', 'TMPDIR'] as const;
@@ -87,9 +142,10 @@ const INHERITED_BY_GIT = ['PATH', 'HOME', 'TMPDIR'] as const;
  * teaching this package the substrate's on-disk layout, which a sandbox does not share with its
  * source of record anyway.
  *
- * The configuration files go the same way: `diff.external` in a user-level file is
+ * The user and system configuration files go the same way: `diff.external` in a user-level file is
  * `GIT_EXTERNAL_DIFF` spelled differently, and every query here is a read that needs no user
- * configuration to answer.
+ * configuration to answer. The repository's own file is a different problem, because a sandbox
+ * shares it -- see `NO_CONFIG` below.
  */
 const gitEnv = (): Env => {
   const env: Env = { ...ENV, GIT_CONFIG_GLOBAL: NO_CONFIG, GIT_CONFIG_SYSTEM: NO_CONFIG };
@@ -146,5 +202,5 @@ export const runGit = async (cwd: string, args: readonly string[], ms?: number):
   const verbs = ALLOWED_VERBS.get(sub);
   if (verbs !== undefined && !verbs.has(args[1] ?? ''))
     throw new Error(`adapter-domain-code: verb not on the allow-list: ${sub} ${args[1] ?? '(none)'}`);
-  return runProcess(cwd, ['git', ...ALWAYS, ...args], ms, gitEnv());
+  return runProcess(cwd, ['git', ...ALWAYS, sub, ...(SUBCOMMAND_ALWAYS.get(sub) ?? []), ...args.slice(1)], ms, gitEnv());
 };

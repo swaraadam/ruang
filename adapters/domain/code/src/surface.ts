@@ -50,6 +50,8 @@ export type RefusalCode =
   | 'change_budget_exceeded'
   /** The change set's own summary of itself does not match the changes it carries. */
   | 'change_set_inconsistent'
+  /** The change set holds resources the declared change unit cannot express a size for. */
+  | 'change_set_unmeasurable'
   | 'risk_not_permitted';
 
 /**

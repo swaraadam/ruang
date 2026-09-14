@@ -4,7 +4,7 @@
  * as binary is emitted as `asset_delta` instead of being squeezed into a text shape — reporting it
  * as "0 lines changed" would be a lie the office would then animate (invariant 1).
  */
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { type Stats, lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RenderSurface, Sandbox } from '@internal/domain';
 import {
@@ -20,8 +20,16 @@ import type { CodeAdapterOptions } from './surface.js';
 
 /** Ranges live in the `+` side of a patch range header: `@@ -a,b +c,d @@`. */
 const RANGE = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
-/** Either spelling of the patch's new-side header: `+++ b/name`, or `+++ "b/na\tme"` when quoted. */
-const FILE_HEADER = /^\+\+\+ (?:"(.*)"|(.*))$/;
+/**
+ * Either spelling of the patch's new-side header: `+++ b/name`, or `+++ "b/na\tme"` when quoted.
+ *
+ * The optional tab sits **outside** the alternation, and that placement is the whole point. The
+ * substrate appends it when the *rendered label* contains a space -- and a quoted label includes
+ * its quotes, so the tab lands after the closing one. Handling it on the unquoted branch alone
+ * matched neither branch for a name that is quoted *and* spaced: four of twelve name shapes
+ * resolved to nothing and silently lost every range they owned.
+ */
+const FILE_HEADER = /^\+\+\+ (?:"(.*)"|(.*?))\t?$/;
 const NEW_SIDE_PREFIX = 'b/';
 /** Anything larger is treated as an asset rather than read into memory to count lines. */
 const MAX_TEXT_BYTES = 1_000_000;
@@ -120,14 +128,12 @@ const parseAnchors = (patch: string, known: ReadonlySet<string>): Map<string, Ch
     }
     const header = FILE_HEADER.exec(line);
     if (header === null) continue;
-    // An unquoted name containing a space keeps the patch format's tab between the path and the
-    // timestamp field that follows it, which is empty here -- so the raw spelling carries one
-    // trailing tab that is not part of the name. A name genuinely *ending* in a tab holds a control
-    // character and therefore arrives quoted instead, so stripping one here can never eat a real
-    // character. Unreported, and the same loss as the quoted case: the resource kept its counts and
-    // silently lost every range.
-    const named =
-      header[1] === undefined ? (header[2] ?? '').replace(/\t$/, '') : unquoteName(header[1]);
+    // A name containing a space keeps the patch format's tab between the label and the timestamp
+    // field that follows it, which is empty here -- so the raw spelling carries one trailing tab
+    // that is not part of the name, on *either* branch (`FILE_HEADER`). A name genuinely ending in
+    // a tab holds a control character and therefore arrives quoted, so the tab consumed there can
+    // never be a real character.
+    const named = header[1] === undefined ? (header[2] ?? '') : unquoteName(header[1]);
     // A removal's new side is the null device, which resolves to nothing and so selects nothing.
     const id = named.startsWith(NEW_SIDE_PREFIX) ? named.slice(NEW_SIDE_PREFIX.length) : '';
     current = known.has(id) ? id : null;
@@ -149,15 +155,74 @@ const lineCount = (path: string): number => {
   return text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length;
 };
 
+/**
+ * The lines a resource that exists only in the sandbox contributes -- read from what the entry
+ * *is*, never through it.
+ *
+ * A reference's own content is the name it holds: one line, which is exactly what the source of
+ * record would store for it. Reading through one instead counted a 137-line resource living outside
+ * the sandbox as work done inside it, and, when the name led to a directory, threw the substrate's
+ * own error out of `compute_change_set` -- `surface.ts` asks for a refusal, not a crash, and a raw
+ * error carrying a host path is the usual way a leak escapes. Nothing else that is not a regular
+ * resource has lines to count, and neither has one that vanished between the listing and this read.
+ */
+const untrackedLines = (full: string, entry: Stats | undefined): number => {
+  if (entry === undefined) return 0;
+  if (entry.isSymbolicLink()) return 1;
+  if (!entry.isFile() || entry.size === 0) return 0;
+  return lineCount(full);
+};
+
 // prettier-ignore
 const assetChange = async (root: string, ref: string, id: string, full: string): Promise<RenderableChange> => {
   // `id` is an argument and stdout is a byte count: no path is read back out of this one.
   const before = await runGit(root, ['cat-file', '-s', `${ref}:${id}`]);
   const was = before.code === 0 ? Number(before.stdout.trim()) : 0;
-  const now = existsSync(full) ? statSync(full).size : 0;
+  // `lstat`, never `stat`: a reference's bytes are the name it holds, and following one would
+  // report the size of a resource outside the sandbox as this sandbox's own change.
+  const entry = lstatSync(full, { throwIfNoEntry: false });
+  const now = entry?.isDirectory() === false ? entry.size : 0;
   // Artifact references (§14.3), never inline bytes: a change must fit inside an event payload.
   const refs = { before_ref: `${ref}:${id}`, after_ref: `sandbox:${id}` };
   return { kind: 'asset_delta', asset_id: id, ...refs, bytes_delta: now - was };
+};
+
+/** What one change contributes to a size in a given unit, or `null` when that unit cannot say. */
+const CONTRIBUTION: Readonly<
+  Partial<Record<ChangeSet['change_unit'], (change: RenderableChange) => number | null>>
+> = {
+  lines: (c) => (c.kind === 'text_patch' ? c.added + c.removed : null),
+  files: () => 1,
+};
+
+const subjectOf = (c: RenderableChange): string =>
+  c.kind === 'asset_delta' || c.kind === 'region_delta' ? c.asset_id : c.resource_id;
+
+/**
+ * A change set's size in its declared unit, **and** the resources that unit cannot describe.
+ *
+ * Keeping the two apart is the point. `lines` has nothing to say about a resource that is not text,
+ * and scoring one zero made "nothing changed" and "fourteen megabytes changed, in a shape I cannot
+ * count" the same number: a budget gate could not tell them apart, and neither could a reader
+ * (invariant 1). A unit this adapter does not count in at all -- the protocol has four, this
+ * adapter offers two -- measures nothing rather than being quietly treated as lines.
+ *
+ * `unmeasured` is the part a single number must not be asked to carry. Whoever decides on the size
+ * has to refuse rather than round the rest down to zero (invariant 4, fail closed).
+ */
+export const measureChangeSet = (
+  changes: readonly RenderableChange[],
+  change_unit: ChangeSet['change_unit'],
+): { readonly size: number; readonly unmeasured: readonly string[] } => {
+  const contribution = CONTRIBUTION[change_unit];
+  const unmeasured: string[] = [];
+  let size = 0;
+  for (const change of changes) {
+    const n = contribution?.(change) ?? null;
+    if (n === null) unmeasured.push(subjectOf(change));
+    else size += n;
+  }
+  return { size, unmeasured };
 };
 
 export const computeChangeSet = async (
@@ -195,12 +260,12 @@ export const computeChangeSet = async (
   // is the change, unless it is too large to be text at all.
   for (const resource_id of others.sort()) {
     const full = join(path, resource_id);
-    const size = existsSync(full) ? statSync(full).size : 0;
-    if (size > MAX_TEXT_BYTES) {
+    const entry = lstatSync(full, { throwIfNoEntry: false });
+    if (entry?.isFile() === true && entry.size > MAX_TEXT_BYTES) {
       changes.push(await asset(resource_id));
       continue;
     }
-    const lines = size === 0 ? 0 : lineCount(full);
+    const lines = untrackedLines(full, entry);
     const whole = lines > 0 ? [textRange(resource_id, 1, lines)] : [];
     changes.push({ kind: 'text_patch', resource_id, anchors: whole, added: lines, removed: 0 });
   }
@@ -208,11 +273,16 @@ export const computeChangeSet = async (
   const added = changes.reduce((n, c) => n + (c.kind === 'text_patch' ? c.added : 0), 0);
   const removed = changes.reduce((n, c) => n + (c.kind === 'text_patch' ? c.removed : 0), 0);
   const change_unit = o.change_unit ?? 'lines';
+  // The same measurement the apply gate makes, so an honest change set can never be reported as
+  // disagreeing with itself by the gate that measures it.
+  const { size, unmeasured } = measureChangeSet(changes, change_unit);
+  const rest =
+    unmeasured.length > 0 ? `, ${unmeasured.length} not countable in ${change_unit}` : '';
   const body = {
     change_set_id: '',
-    summary: `${changes.length} resource(s) changed (+${added} -${removed})`,
+    summary: `${changes.length} resource(s) changed (+${added} -${removed}${rest})`,
     change_unit,
-    change_size: change_unit === 'files' ? changes.length : added + removed,
+    change_size: size,
     changes,
   } as const;
   // The id is excluded from the hash, so two captures of an unchanged sandbox are one review under

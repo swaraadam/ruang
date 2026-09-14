@@ -8,16 +8,17 @@
  */
 import { spawnSync } from 'node:child_process';
 // prettier-ignore
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DomainAdapter } from '@internal/domain';
+import type { DomainAdapter, Sandbox } from '@internal/domain';
 import type { ChangeSet } from '@internal/protocol';
 import { describe, expect, it } from 'vitest';
 import { codeHarness } from '../../../../tests/contract/code-harness.js';
 import { createCodeAdapter } from '../src/adapter.js';
 import { runGit } from '../src/process.js';
+import type { CodeAdapterOptions } from '../src/surface.js';
 
 /**
  * Wider than `scripts/audit-seams.sh`, on purpose: the audit does not scan `adapters/` for git
@@ -166,70 +167,94 @@ describe('patch range headers become the anchors they claim to be (§5.2.1)', ()
  * So the assertions are the size the caller is told against the size that is there, and every range
  * against the resource it names. A name that merely round-trips as a string satisfies neither.
  */
-describe('a resource whose name the substrate cannot print literally (invariant 1, §16.6)', () => {
-  const PROJECT = 'names-are-input';
-  const git = (cwd: string, args: readonly string[]): void => {
-    const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
-    if (r.status !== 0) throw new Error(`fixture setup failed: git ${args.join(' ')}\n${r.stderr}`);
-  };
+const PROJECT = 'names-are-input';
+const git = (cwd: string, args: readonly string[]): void => {
+  const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`fixture setup failed: git ${args.join(' ')}\n${r.stderr}`);
+};
 
-  type Fixture = {
-    set: ChangeSet;
-    adapter: DomainAdapter;
-    at: string;
-    tearDown: () => void;
-  };
+type Fixture = {
+  set: ChangeSet;
+  adapter: DomainAdapter;
+  sandbox: Sandbox;
+  /** Where the sandbox is, and where the source of record is: hostile input arrives at both. */
+  at: string;
+  source: string;
+  tearDown: () => void;
+};
 
-  const fixture = async (
-    seed: (at: string) => void,
-    work: (at: string) => void,
-  ): Promise<Fixture> => {
-    const root = mkdtempSync(join(tmpdir(), 'hostile-names-'));
-    const source = join(root, 'source');
-    mkdirSync(source, { recursive: true });
-    git(source, ['init', '-q', '-b', 'main', '.']);
-    seed(source);
-    git(source, ['add', '-A']);
-    const who = ['user.name=fixture', 'user.email=f@example.invalid', 'commit.gpgsign=false'];
-    git(source, [...who.flatMap((c) => ['-c', c]), 'commit', '-q', '-m', 'baseline']);
+/**
+ * One source of record, one sandbox, one change set. `work` receives the source of record as well
+ * as the sandbox because a sandbox shares its source's configuration, which is an input too.
+ */
+const fixture = async (
+  seed: (at: string) => void,
+  work: (at: string, source: string) => void,
+  options: Partial<CodeAdapterOptions> = {},
+): Promise<Fixture> => {
+  const root = mkdtempSync(join(tmpdir(), 'hostile-names-'));
+  const source = join(root, 'source');
+  mkdirSync(source, { recursive: true });
+  git(source, ['init', '-q', '-b', 'main', '.']);
+  seed(source);
+  git(source, ['add', '-A']);
+  const who = ['user.name=fixture', 'user.email=f@example.invalid', 'commit.gpgsign=false'];
+  git(source, [...who.flatMap((c) => ['-c', c]), 'commit', '-q', '-m', 'baseline']);
 
-    const sandboxes = join(root, 'sandboxes');
-    const adapter = createCodeAdapter({
-      project_id: PROJECT,
-      source_of_record: source,
-      sandbox_root: sandboxes,
-      artifacts_root: join(root, 'artifacts'),
-    });
-    const basis = await adapter.snapshot_basis(PROJECT, []);
-    const sandbox = await adapter.open_sandbox(PROJECT, basis);
-    const at = join(sandboxes, PROJECT, sandbox.sandbox_id);
-    work(at);
-    return {
-      set: await adapter.compute_change_set(sandbox),
-      adapter,
-      at,
-      tearDown: () => rmSync(root, { recursive: true, force: true }),
-    };
-  };
-
-  type Named = { resource_id: string };
-  const byId = <T extends Named>(xs: readonly T[]): T[] =>
-    [...xs].sort((a, b) => (a.resource_id < b.resource_id ? -1 : 1));
-  const patchesOf = (set: ChangeSet): Named[] =>
-    set.changes.flatMap((c) => (c.kind === 'text_patch' ? [c] : []));
-  const range = (resource_id: string, start_line: number, end_line: number): unknown => ({
-    kind: 'text_range',
-    resource_id,
-    start_line,
-    end_line,
+  const sandboxes = join(root, 'sandboxes');
+  const adapter = createCodeAdapter({
+    project_id: PROJECT,
+    source_of_record: source,
+    sandbox_root: sandboxes,
+    artifacts_root: join(root, 'artifacts'),
+    ...options,
   });
+  const basis = await adapter.snapshot_basis(PROJECT, []);
+  const sandbox = await adapter.open_sandbox(PROJECT, basis);
+  const at = join(sandboxes, PROJECT, sandbox.sandbox_id);
+  work(at, source);
+  return {
+    set: await adapter.compute_change_set(sandbox),
+    adapter,
+    sandbox,
+    at,
+    source,
+    tearDown: () => rmSync(root, { recursive: true, force: true }),
+  };
+};
 
-  /** Every spelling that forces an escape, plus two that do not, so the plain path stays covered. */
+type Named = { resource_id: string };
+const byId = <T extends Named>(xs: readonly T[]): T[] =>
+  [...xs].sort((a, b) => (a.resource_id < b.resource_id ? -1 : 1));
+const patchesOf = (set: ChangeSet): Named[] =>
+  set.changes.flatMap((c) => (c.kind === 'text_patch' ? [c] : []));
+const range = (resource_id: string, start_line: number, end_line: number): unknown => ({
+  kind: 'text_range',
+  resource_id,
+  start_line,
+  end_line,
+});
+/** The seam's own answer, not its wording: every refusal carries a code the core can act on. */
+const refusalOf = async (planned: Promise<unknown>): Promise<string> =>
+  planned.then(
+    () => 'no refusal',
+    (e: unknown) => (e as { code?: string }).code ?? 'not a refusal',
+  );
+
+describe('a resource whose name the substrate cannot print literally (invariant 1, §16.6)', () => {
+  /**
+   * The cross-product, not the shapes someone happened to list. Two properties interact here and
+   * each has now been fixed on its own: the substrate C-quotes a name holding a control character,
+   * a quote or a backslash, and it appends a field separator when the *rendered* label -- quotes
+   * included -- holds a space. One trigger per name is exactly why the quoted-and-spaced half of
+   * this defect survived the first fix of it, so every trigger appears both with and without one.
+   */
   // prettier-ignore
-  const NAMES = [
-    'plain', 'with space', '-leading-dash', 'nön-äscii-Ω-漢字',
+  const TRIGGERS = [
+    'plain', '-leading-dash', 'nön-äscii-Ω-漢字',
     'new\nline', 'tab\there', 'back\\slash', 'double"quote',
   ];
+  const NAMES = TRIGGERS.flatMap((t) => [t, `sp ace ${t}`]);
   const BEFORE = 't1\nt2\nt3\n';
   const AFTER = 't1\nEDITED\nt3\n';
   const FRESH_LINES = 7;
@@ -295,7 +320,7 @@ describe('a resource whose name the substrate cannot print literally (invariant 
 
   it('keeps a range inside a resource whose own content spells a patch header', async () => {
     const f = await fixture(
-      (at) => {
+      (at: string) => {
         writeFileSync(
           join(at, 'guide.md'),
           `${Array.from({ length: 10 }, (_, i) => `g${i + 1}`).join('\n')}\n`,
@@ -340,6 +365,205 @@ describe('a resource whose name the substrate cannot print literally (invariant 
           removed: 1,
         },
       ]);
+    } finally {
+      f.tearDown();
+    }
+  });
+});
+
+/**
+ * A sandbox shares its source of record's configuration file, so `git config` run *inside* a
+ * sandbox decides what the adapter runs *outside* one -- and it persists there after the sandbox is
+ * gone. `diff.external` is `GIT_EXTERNAL_DIFF` spelled differently, and it turned
+ * `compute_change_set` into an execution of an arbitrary program; `core.fsmonitor` does the same
+ * through `inspect_sandbox`, which §5.2.3 promises is non-mutating. A command-line `-c` outranks
+ * every configuration file, which is the only way to reach that file.
+ *
+ * The table is the audit rather than the two keys that were reported. A driver's name comes from
+ * the content itself -- `.gitattributes` selects `diff=<name>` -- so `diff.<name>.command` and
+ * `diff.<name>.textconv` cannot be pinned by name and are refused per invocation instead. The two
+ * channels that stay open are named in `process.ts`, not left for the next reviewer to rediscover.
+ */
+describe('the source of record’s own configuration cannot turn a read into an execution', () => {
+  /** `tail` is what the program does after leaving its mark, so the substrate carries on as usual. */
+  const CHANNELS = [
+    { key: 'diff.external', tail: 'exit 0', attribute: null },
+    { key: 'core.fsmonitor', tail: 'exit 1', attribute: null },
+    { key: 'diff.evil.command', tail: 'exit 0', attribute: '* diff=evil\n' },
+    { key: 'diff.evil.textconv', tail: 'cat "$1"', attribute: '* diff=evil\n' },
+    { key: 'core.pager', tail: 'cat', attribute: null },
+  ] as const;
+
+  it.each(CHANNELS)('runs no program named by $key', async (channel) => {
+    const mark = `ran-${channel.key}`;
+    const f = await fixture(
+      (at) => {
+        writeFileSync(join(at, 'seed.md'), 'one\ntwo\n');
+        if (channel.attribute !== null)
+          writeFileSync(join(at, '.gitattributes'), channel.attribute);
+      },
+      (at, source) => {
+        const program = join(source, '..', 'named-by-configuration.sh');
+        const marker = join(source, '..', mark);
+        writeFileSync(program, `#!/bin/sh\necho ran >> "${marker}"\n${channel.tail}\n`, {
+          mode: 0o755,
+        });
+        // Armed the way an actor inside the sandbox arms it, from inside the sandbox.
+        git(at, ['config', channel.key, program]);
+        writeFileSync(join(at, 'seed.md'), 'one\nEDITED\n');
+      },
+    );
+    try {
+      await f.adapter.inspect_sandbox(f.sandbox);
+      expect(existsSync(join(f.source, '..', mark))).toBe(false);
+      // And the answer is still the answer: refusing the program costs no fidelity.
+      expect(f.set.change_size).toBe(2);
+    } finally {
+      f.tearDown();
+    }
+  });
+
+  /**
+   * The same file reaching the same methods from the other direction, and the destructive one: one
+   * key made a sandbox holding the only copy of a resource report "no unsaved changes", and the
+   * close that followed was refused nothing -- `force` was never asked for (§10.4, invariant 3).
+   */
+  it('reports the unsaved work that is there, whatever the configuration says to list', async () => {
+    const f = await fixture(
+      (at) => writeFileSync(join(at, 'seed.md'), 'one\n'),
+      (at) => {
+        writeFileSync(join(at, 'the-only-copy.md'), 'work that exists nowhere else\n');
+        git(at, ['config', 'status.showUntrackedFiles', 'no']);
+      },
+    );
+    try {
+      const inspection = await f.adapter.inspect_sandbox(f.sandbox);
+      expect(inspection).toMatchObject({ dirty: true, safe_to_close: false });
+      const closed = await f.adapter.close_sandbox(f.sandbox, {
+        force: false,
+        retain_artifacts: true,
+      });
+      expect(closed.closed).toBe(false);
+      expect(existsSync(join(f.at, 'the-only-copy.md'))).toBe(true);
+    } finally {
+      f.tearDown();
+    }
+  });
+});
+
+/**
+ * A reference is a name for content held somewhere else, and it is never read *through*. Following
+ * one counted 137 lines living outside the sandbox as work done inside it -- invariant 1 in the
+ * number a budget decision is made on -- and, when the name led to a directory, threw the
+ * substrate's own error out of `compute_change_set` instead of refusing (`surface.ts`: a refusal,
+ * not a crash). What the reference holds is one line, which is what the source of record stores.
+ */
+describe('a reference is described, never read through (§5.2.1, invariant 1)', () => {
+  const OUTSIDE = 137;
+  const held = `${Array.from({ length: OUTSIDE }, (_, i) => `held ${i}`).join('\n')}\n`;
+
+  it('counts the reference and not the resource it names, wherever that resource leads', async () => {
+    const f = await fixture(
+      (at) => writeFileSync(join(at, 'seed.md'), 'one\n'),
+      (at, source) => {
+        const outside = join(source, '..', 'not-the-sandbox');
+        mkdirSync(join(outside, 'a-directory'), { recursive: true });
+        writeFileSync(join(outside, 'held-elsewhere.md'), held);
+        writeFileSync(join(outside, 'a-directory', 'more.md'), held);
+        symlinkSync(join(outside, 'held-elsewhere.md'), join(at, 'pointer.md'));
+        // The limb that is not a fidelity loss but an unhandled crash: a name leading to a
+        // directory, whose bytes cannot be read as text at all.
+        symlinkSync(join(outside, 'a-directory'), join(at, 'dir-pointer'));
+      },
+    );
+    try {
+      expect(byId(patchesOf(f.set))).toEqual([
+        {
+          kind: 'text_patch',
+          resource_id: 'dir-pointer',
+          anchors: [range('dir-pointer', 1, 1)],
+          added: 1,
+          removed: 0,
+        },
+        {
+          kind: 'text_patch',
+          resource_id: 'pointer.md',
+          anchors: [range('pointer.md', 1, 1)],
+          added: 1,
+          removed: 0,
+        },
+      ]);
+      // Two references, two lines. Never 137, and never 274.
+      expect(f.set.change_size).toBe(2);
+    } finally {
+      f.tearDown();
+    }
+  });
+});
+
+/**
+ * §16.6 with invariant 4. A budget decision needs a size that covers the whole change set, and
+ * `lines` has nothing to say about a resource that is not text. Scoring one zero made "nothing
+ * changed" and "fourteen megabytes changed, in a shape I cannot count" the same number: six binary
+ * resources planned cleanly under a budget of **zero**, with nothing forged, nothing inconsistent
+ * and nothing for the gate to catch. A size that cannot describe the set is refused, not rounded.
+ */
+describe('a change set the declared unit cannot size is refused, never scored zero', () => {
+  const OPAQUE = Uint8Array.from([0x00, 0x01, 0x02, 0xff, 0x00, 0xfe]);
+  const REVISED = Uint8Array.from([0x00, 0x01, 0x02, 0xff, 0x00, 0xfe, 0xab, 0xcd]);
+  const seedAssets = (at: string): void => {
+    writeFileSync(join(at, 'first.opaque'), OPAQUE);
+    writeFileSync(join(at, 'second.opaque'), OPAQUE);
+  };
+  const reviseAssets = (at: string): void => {
+    writeFileSync(join(at, 'first.opaque'), REVISED);
+    writeFileSync(join(at, 'second.opaque'), REVISED);
+  };
+  const risk = { max_risk: 'high' } as const;
+
+  it('refuses a change set of resources its unit cannot express, at any budget', async () => {
+    const f = await fixture(seedAssets, reviseAssets);
+    try {
+      expect(f.set.changes.every((c) => c.kind === 'asset_delta')).toBe(true);
+      expect(await refusalOf(f.adapter.apply_plan(f.set, { ...risk, change_budget: 0 }))).toBe(
+        'change_set_unmeasurable',
+      );
+      // Not a size question, so no budget is wide enough to answer it.
+      expect(await refusalOf(f.adapter.apply_plan(f.set, { ...risk, change_budget: 10_000 }))).toBe(
+        'change_set_unmeasurable',
+      );
+    } finally {
+      f.tearDown();
+    }
+  });
+
+  it('measures the same change set in a unit that can express it, and the gate decides on that', async () => {
+    const f = await fixture(seedAssets, reviseAssets, { change_unit: 'files' });
+    try {
+      expect(f.set.change_size).toBe(2);
+      expect(await refusalOf(f.adapter.apply_plan(f.set, { ...risk, change_budget: 1 }))).toBe(
+        'change_budget_exceeded',
+      );
+      await expect(
+        f.adapter.apply_plan(f.set, { ...risk, change_budget: 2 }),
+      ).resolves.toBeDefined();
+    } finally {
+      f.tearDown();
+    }
+  });
+
+  it('counts in no unit it does not count in', async () => {
+    const f = await fixture(
+      (at) => writeFileSync(join(at, 'seed.md'), 'one\ntwo\n'),
+      (at) => writeFileSync(join(at, 'seed.md'), 'one\nEDITED\n'),
+    );
+    try {
+      // The protocol has four change units and this adapter counts in two. A change set arriving
+      // in one of the other two was measured as lines, which is a size about a different question.
+      const foreign = { ...f.set, change_unit: 'megabytes' as const, change_size: 2 };
+      expect(await refusalOf(f.adapter.apply_plan(foreign, { ...risk, change_budget: 2 }))).toBe(
+        'change_set_unmeasurable',
+      );
     } finally {
       f.tearDown();
     }
