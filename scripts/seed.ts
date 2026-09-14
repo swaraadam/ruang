@@ -7,11 +7,11 @@
  * like history a real run produced. Nothing downstream needs an "is this seeded?" branch — which is
  * the point: a renderer that had to know would be rendering a fixture, not durable truth.
  *
- * The four tasks cover the whole `fresh | stale | unknown` basis union plus the state that freezes
- * mutation, because a seed of happy paths teaches the office to render only happy paths: `unknown`
- * basis and therefore never dispatched (invariants 1 and 4); `stale` basis, also not dispatched but
- * for a reason the system can name; and `needs-repair` holding a lock whose disposition is
- * `held-by-frozen-task` (invariant 3).
+ * PART 1 writes the machinery and the rows everything else hangs off: org, people, role, project,
+ * and the one `project.registered` event. It seeds no tasks. The four `dev-task-*` fixtures — which
+ * cover the whole `fresh | stale | unknown` basis union plus the state that freezes mutation — are
+ * part 2, because a seed of happy paths would teach the office to render only happy paths and that
+ * is the half worth reviewing on its own.
  */
 import { mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
