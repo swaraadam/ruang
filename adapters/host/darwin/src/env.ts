@@ -22,6 +22,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   closeSync,
   fchmodSync,
   mkdirSync,
@@ -51,6 +52,10 @@ export type DarwinEnv = {
   readonly run: (argv: readonly string[]) => CommandResult;
   readonly readFile: (path: string) => string;
   readonly writeFile: (path: string, body: string) => void;
+  /** Permission bits of an existing file, or null when there is nothing to stat. Null is "no
+   * answer", never 0: a mode of zero is a real and very different posture. */
+  readonly fileMode: (path: string) => number | null;
+  readonly setFileMode: (path: string, mode: number) => void;
   readonly realpath: (path: string) => string;
   readonly ownerUid: (path: string) => number;
   readonly diskFree: (path: string) => { readonly available: number; readonly total: number };
@@ -74,6 +79,19 @@ export type DarwinEnv = {
 export const GUARDED_BINARIES = ['launchctl', 'sudo', 'defaults', 'systemsetup', 'csrutil'];
 
 export class GuardedCommandError extends Error {}
+
+/**
+ * The one mode an autostart manifest this adapter owns is allowed to sit at. One constant, because
+ * it is now applied from two places -- `writeFile` on the descriptor it just truncated, and
+ * `restrictAccess` on a file whose body nothing rewrote -- and two literals that must agree are a
+ * later divergence waiting to happen.
+ *
+ * `man launchctl`: a LaunchAgent under the loading user's home must be owned by that user and must
+ * not be group- or world-WRITABLE. There is no read requirement, so 0600 satisfies it. That is
+ * read from the manual page, not from an executed `launchctl bootstrap`; the owner procedure is
+ * where a real load gets verified (`ownerProcedure`).
+ */
+export const MANIFEST_MODE = 0o600;
 
 /**
  * The one choke point. `guarded` defaults to the list above; `run` never passes another, and the
@@ -147,6 +165,14 @@ export const defaultDarwinEnv = (overrides: Partial<DarwinEnv> = {}): DarwinEnv 
      * belongs in the credential broker (blueprint §12.1), not here, and this mode does not change
      * that.
      *
+     * WHAT THIS FUNCTION COVERS, precisely, because an earlier version of this comment claimed
+     * more than the code did. It narrows every manifest it WRITES, including a rewrite over an
+     * older 0644 one. It does NOT reach a manifest whose body is already identical, because the
+     * autostart contract does not call it then and re-writing unchanged bytes is not this
+     * function's decision to make. That case -- the same plan re-installed after an adapter
+     * upgrade, which is the common one -- is `restrictAccess` in `autostart.ts`, and it runs on
+     * every install and every repair whether or not this function was called at all.
+     *
      * The containing directory is NOT narrowed, and this comment says so rather than letting a
      * reader assume it: `mkdirSync` creates it with this process's default when it is missing
      * (0755 under a 0022 umask, measured) and leaves it alone when it already exists. It is shared
@@ -159,14 +185,22 @@ export const defaultDarwinEnv = (overrides: Partial<DarwinEnv> = {}): DarwinEnv 
       // manifest -- including a 0644 one an earlier version of this adapter wrote -- would keep the
       // mode it already had. So narrow it on the descriptor, after the truncate and before any byte
       // of the new body is in the file, rather than chmod-ing afterwards.
-      const fd = openSync(path, 'w', 0o600);
+      const fd = openSync(path, 'w', MANIFEST_MODE);
       try {
-        fchmodSync(fd, 0o600);
+        fchmodSync(fd, MANIFEST_MODE);
         writeFileSync(fd, body, 'utf8');
       } finally {
         closeSync(fd);
       }
     },
+    fileMode: (path) => {
+      try {
+        return statSync(path).mode & 0o7777;
+      } catch {
+        return null;
+      }
+    },
+    setFileMode: (path, mode) => chmodSync(path, mode),
     realpath: (path) => realpathSync.native(path),
     ownerUid: (path) => statSync(path).uid,
     diskFree: (path) => {

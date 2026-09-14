@@ -104,6 +104,17 @@ export type AutostartStatus = {
   readonly manifest_path: string | null;
   readonly manifest_digest: string | null;
   readonly expected_digest: string | null;
+  /**
+   * Who may READ the stored manifest, in the host's own spelling (octal permission bits on a POSIX
+   * host), or null when there is no manifest or the host has no posture to report.
+   *
+   * It is here because the digest answers "are the bytes the ones we planned?" and nothing answered
+   * "and who else can read them?". The manifest carries `AutostartPlan.environment` verbatim into a
+   * file that survives a reboot, so that second question is part of the unit's state and not an
+   * ambient filesystem detail. Reported rather than asserted: a wrong posture is then visible from
+   * `status()` alone instead of being silent until someone stats the file.
+   */
+  readonly manifest_access: string | null;
   readonly detail: string;
   /** True whenever a human must act before autostart can be believed. Fails closed. */
   readonly needs_owner: boolean;
@@ -112,8 +123,14 @@ export type AutostartStatus = {
 
 export type AutostartInstallResult = {
   readonly manifest_path: string;
-  /** False when the bytes already matched: install is idempotent and says so. */
+  /** False when the BYTES already matched: install is idempotent and says so. It is a statement
+   * about the body and about nothing else — `restricted_access` reports the other thing install
+   * may change about a manifest it found already in place. */
   readonly wrote: boolean;
+  /** What install did to an existing manifest's access posture, null when it needed nothing. Not
+   * folded into `wrote`, because narrowing a file whose bytes are unchanged is a real change and
+   * a result that reported `wrote: false` and nothing else would hide it. */
+  readonly restricted_access: string | null;
   readonly digest: string;
   readonly status: AutostartStatus;
   /** Always present. Writing the manifest is the whole of what an adapter may do. */

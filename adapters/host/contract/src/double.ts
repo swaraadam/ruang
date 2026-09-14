@@ -29,6 +29,11 @@ import { summarizeProbes } from './spi.js';
 export type SessionStore = Map<string, HostSession>;
 export const createSessionStore = (): SessionStore => new Map();
 
+/** The one posture the double accepts for a manifest it wrote. Spelled like the real host's octal
+ * so one shared contract assertion reads both implementations without branching on which it has.
+ * Module-private: a caller that needed it would be a caller depending on the double's internals. */
+const DOUBLE_REQUIRED_ACCESS = '600';
+
 export type HostDoubleOptions = {
   readonly now?: () => Date;
   readonly capabilities?: Partial<HostCapabilities>;
@@ -40,6 +45,9 @@ export type HostDoubleOptions = {
   readonly case_insensitive?: boolean;
   readonly sessions?: SessionStore;
   readonly manifests?: Map<string, string>;
+  /** Access posture per manifest path. Seeding a wide one is how a test says "an older version of
+   * this adapter wrote that file" without needing a filesystem to chmod. */
+  readonly manifest_modes?: Map<string, string>;
   readonly probe_overrides?: Partial<Record<ProbeKind, Partial<HealthProbe>>>;
   readonly notify_outcome?: NotificationOutcome;
   /** False makes the backend unreachable, so the live set becomes unknown rather than empty. */
@@ -49,6 +57,7 @@ export type HostDoubleOptions = {
 export type HostDouble = HostAdapter & {
   readonly sessions: SessionStore;
   readonly manifests: Map<string, string>;
+  readonly manifest_modes: Map<string, string>;
   /** Simulate the process inside a session exiting. */
   endSession(session_id: string): void;
 };
@@ -61,6 +70,15 @@ export const createHostDouble = (options: HostDoubleOptions = {}): HostDouble =>
   const existing = new Set(options.existing_paths ?? ['/', ...roots, ...Object.keys(symlinks)]);
   const sessions = options.sessions ?? createSessionStore();
   const manifests = options.manifests ?? new Map<string, string>();
+  /**
+   * The double has no filesystem, so it keeps the one property of one that this contract cares
+   * about: who may read a stored manifest. Not a simulated filesystem and not a mode bit — a
+   * string in the same position the real host's octal goes, so that "install and repair correct a
+   * posture the body did not change" is provable on any platform rather than only on Darwin.
+   * `DOUBLE_REQUIRED_ACCESS` stands where the real host's required mode stands; the double is not
+   * claiming POSIX, it is claiming that it has one required answer and reports departures from it.
+   */
+  const modes = options.manifest_modes ?? new Map<string, string>();
   const up = options.backend_available !== false;
 
   const realpath = (path: string): string => {
@@ -104,6 +122,7 @@ export const createHostDouble = (options: HostDoubleOptions = {}): HostDouble =>
   return {
     sessions,
     manifests,
+    manifest_modes: modes,
     endSession: (session_id) => {
       const found = sessions.get(session_id);
       if (found !== undefined) sessions.set(session_id, { ...found, status: 'exited' });
@@ -168,7 +187,18 @@ export const createHostDouble = (options: HostDoubleOptions = {}): HostDouble =>
         render: (plan) => JSON.stringify({ marker: MANAGED_MARKER, ...plan }),
         procedureFor,
         read: (path) => manifests.get(path) ?? null,
-        write: (path, body) => void manifests.set(path, body),
+        write: (path, body) => {
+          manifests.set(path, body);
+          modes.set(path, DOUBLE_REQUIRED_ACCESS);
+        },
+        readAccess: (path) => (manifests.has(path) ? (modes.get(path) ?? null) : null),
+        restrictAccess: (path) => {
+          const before = modes.get(path);
+          if (!manifests.has(path) || before === undefined) return null;
+          if (before === DOUBLE_REQUIRED_ACCESS) return null;
+          modes.set(path, DOUBLE_REQUIRED_ACCESS);
+          return `narrowed ${path} from ${before} to ${DOUBLE_REQUIRED_ACCESS}`;
+        },
       }),
 
     path_policy: () => paths,

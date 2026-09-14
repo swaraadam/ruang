@@ -17,7 +17,7 @@ import type {
   OwnerProcedure,
   PathPolicy,
 } from '@internal/host-contract';
-import { GUARDED_BINARIES } from './env.js';
+import { GUARDED_BINARIES, MANIFEST_MODE } from './env.js';
 import type { DarwinEnv } from './env.js';
 
 const xml = (v: string): string =>
@@ -135,6 +135,32 @@ export const ownerProcedure = (env: DarwinEnv, unit_id: string): OwnerProcedure 
   };
 };
 
+/** Unmasked on purpose: a manifest carrying a setuid or sticky bit should READ as `2644`, not be
+ * quietly reported as `644`. `status` is an observation and rounding one off is inventing data. */
+const octal = (mode: number): string => mode.toString(8).padStart(3, '0');
+
+/**
+ * The half of the manifest's mode that a write cannot reach.
+ *
+ * `env.writeFile` narrows the descriptor it writes, so a created or rewritten manifest is 0600
+ * already. The gap it leaves is the UPGRADE: the same plan re-installed after this adapter changed
+ * its mode policy renders identical bytes, so nothing writes, so a 0644 file an older version left
+ * behind stays 0644 forever. The shared contract therefore calls this on every install and every
+ * repair, body changed or not.
+ *
+ * The test is "any group or other bit set", not "not equal to 0600", and the direction matters: it
+ * makes this function incapable of WIDENING. A manifest an owner tightened to 0400 satisfies the
+ * property the security review asked for and is left exactly as it is, while 0644 and 0640 and
+ * 0604 are all brought to 0600. `null` covers both "no file" and "cannot stat it", because neither
+ * is a narrowing this call performed and reporting one would be inventing an action.
+ */
+const restrictManifestAccess = (env: DarwinEnv, path: string): string | null => {
+  const mode = env.fileMode(path);
+  if (mode === null || (mode & 0o077) === 0) return null;
+  env.setFileMode(path, MANIFEST_MODE);
+  return `narrowed ${path} from ${octal(mode)} to ${octal(MANIFEST_MODE)}`;
+};
+
 export const createAutostartContract = (env: DarwinEnv, paths: PathPolicy): AutostartContract =>
   createManifestAutostart({
     pathFor: (unit_id) => manifestPath(env, unit_id),
@@ -153,4 +179,9 @@ export const createAutostartContract = (env: DarwinEnv, paths: PathPolicy): Auto
       }
     },
     write: env.writeFile,
+    readAccess: (path) => {
+      const mode = env.fileMode(path);
+      return mode === null ? null : octal(mode);
+    },
+    restrictAccess: (path) => restrictManifestAccess(env, path),
   });

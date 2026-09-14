@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { AutostartPlan, DarwinEnv } from '../src/index.js';
 import {
+  MANIFEST_MODE,
   createDarwinHostAdapter,
   defaultDarwinEnv,
   manifestPath,
@@ -34,6 +35,10 @@ const env = (over: Partial<DarwinEnv> = {}): DarwinEnv => ({
   run: () => ({ code: 0, stdout: '', stderr: '', error: null }),
   readFile: () => 'readable',
   writeFile: () => undefined,
+  // No file exists for these unit tests, so there is no mode to report and nothing to narrow.
+  // Null is the honest answer and it is what `restrictAccess` reads as "did nothing".
+  fileMode: () => null,
+  setFileMode: () => undefined,
   realpath: (p) => p,
   ownerUid: () => 501,
   diskFree: () => ({ available: 200 * 1024 ** 3, total: 500 * 1024 ** 3 }),
@@ -325,5 +330,71 @@ describe('the mode of the manifest on disk', () => {
     const repaired = await autostart.repair({ ...plan, keep_alive: !plan.keep_alive });
     expect(repaired.actions_taken.join(' ')).toMatch(/rewrote divergent/);
     expect((statSync(first.manifest_path).mode & 0o777).toString(8)).toBe('600');
+  });
+
+  /**
+   * The case above changes the body (`keep_alive` is flipped), so a write happens and the write is
+   * what narrows. This one does not, and it is the one the mode policy was written for: the SAME
+   * plan, re-installed after the adapter changed. `renderManifest` is byte-identical, so nothing
+   * is written and nothing on the write path runs. Before `restrictAccess` existed this stayed
+   * 0644 through both `install()` and `repair()`, with `wrote: false` and `actions_taken: []`
+   * reporting that there had been nothing to do.
+   */
+  it('narrows an existing manifest whose body did not change at all', async () => {
+    const plan = installable('placeholder.upgraded');
+    const autostart = createDarwinHostAdapter(real).autostart_contract();
+    const path = (await autostart.install(plan)).manifest_path;
+    expect(real.readFile(path)).toBe(renderManifest(plan));
+    chmodSync(path, 0o644);
+
+    const reinstalled = await autostart.install(plan);
+    expect(reinstalled.wrote).toBe(false);
+    expect(reinstalled.restricted_access).toBe(`narrowed ${path} from 644 to 600`);
+    expect((statSync(path).mode & 0o777).toString(8)).toBe('600');
+    expect(statSync(path).mode & 0o077).toBe(0);
+    expect(reinstalled.status.manifest_access).toBe('600');
+
+    chmodSync(path, 0o644);
+    const repaired = await autostart.repair(plan);
+    expect(repaired.actions_taken).toEqual([`narrowed ${path} from 644 to 600`]);
+    expect((statSync(path).mode & 0o777).toString(8)).toBe('600');
+    expect((await autostart.status(plan.unit_id)).manifest_access).toBe('600');
+  });
+
+  it('reports the mode it found without changing it, so status only observes', async () => {
+    const plan = installable('placeholder.observed');
+    const autostart = createDarwinHostAdapter(real).autostart_contract();
+    const path = (await autostart.install(plan)).manifest_path;
+    chmodSync(path, 0o640);
+    expect((await autostart.status(plan.unit_id)).manifest_access).toBe('640');
+    expect((statSync(path).mode & 0o777).toString(8)).toBe('640');
+  });
+
+  it('leaves a manifest the owner made STRICTER alone: this narrows, it never widens', async () => {
+    const plan = installable('placeholder.stricter');
+    const autostart = createDarwinHostAdapter(real).autostart_contract();
+    const path = (await autostart.install(plan)).manifest_path;
+    chmodSync(path, 0o400);
+    const repaired = await autostart.repair(plan);
+    expect(repaired.actions_taken).toEqual([]);
+    expect((statSync(path).mode & 0o777).toString(8)).toBe('400');
+  });
+});
+
+/** The two facts about the mode that need no filesystem, so they do not pay for one. */
+describe('what the adapter says about a manifest mode', () => {
+  /** Backs the sentence on `octal`: the high bits are reported, not masked off. Driven through the
+   * scripted env rather than a real chmod, because setting a setgid bit on a regular file is not
+   * something a test should need permission for. */
+  it('reports a high bit it found instead of rounding the mode down to three digits', async () => {
+    const status = await createDarwinHostAdapter(env({ fileMode: () => 0o2644 }))
+      .autostart_contract()
+      .status('placeholder.highbit');
+    expect(status.manifest_access).toBe('2644');
+  });
+
+  it('uses one constant for the mode it writes and the mode it restores to', () => {
+    expect(MANIFEST_MODE).toBe(0o600);
+    expect(MANIFEST_MODE & 0o077).toBe(0);
   });
 });

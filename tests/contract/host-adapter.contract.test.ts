@@ -38,6 +38,10 @@ type Fixture = {
   tamper(unit_id: string): void;
   /** Put a file this adapter never wrote at the path a unit id composes to. Not repairable. */
   plantForeign(unit_id: string): void;
+  /** Leave the manifest's access posture where an OLDER version of this adapter left it: wider
+   * than required, with the body untouched. The body is what makes it a regression fixture — a
+   * plan that still renders these exact bytes is the upgrade nothing rewrites. */
+  widenAccess(unit_id: string): void;
   /** A second adapter over the same host state: what "the gateway restarted" means here. */
   restart(): HostAdapter;
 };
@@ -55,10 +59,12 @@ const plan = (unit_id: string, root: string): AutostartPlan => ({
 const doubleFixture = (scenario: Scenario = {}): Fixture => {
   const sessions = createSessionStore();
   const manifests = new Map<string, string>();
+  const manifest_modes = new Map<string, string>();
   const build = (): HostAdapter =>
     createHostDouble({
       sessions,
       manifests,
+      manifest_modes,
       allow_roots: ['/allowed'],
       symlinks: { '/allowed/link': '/etc' },
       existing_paths: ['/', '/allowed', '/allowed/link'],
@@ -85,9 +91,15 @@ const doubleFixture = (scenario: Scenario = {}): Fixture => {
       ),
     plantForeign: (unit_id) =>
       void manifests.set(`/double/autostart/${unit_id}`, '{"someone":"else"}'),
+    widenAccess: (unit_id) => void manifest_modes.set(`/double/autostart/${unit_id}`, WIDE_ACCESS),
     restart: build,
   };
 };
+
+/** What both implementations spell a group- and world-readable manifest as. Octal on the real
+ * host; the double borrows the spelling so one assertion reads both. */
+const WIDE_ACCESS = '644';
+const REQUIRED_ACCESS = '600';
 
 const ROOT = '/Users/owner/projects';
 const REAL = new Set(['/', '/Users/owner', ROOT, `${ROOT}/link`]);
@@ -102,6 +114,9 @@ const down = (b: string): CommandResult => ({
 
 const darwinFixture = (scenario: Scenario = {}): Fixture => {
   const files = new Map<string, string>();
+  // The scripted host's permission bits. `0o644` is what `defaultDarwinEnv` produced before the
+  // mode was narrowed, so it is what an upgraded install finds on disk.
+  const modes = new Map<string, number>();
   const live = new Map<string, number>();
   const spawned: string[][] = [];
 
@@ -138,7 +153,12 @@ const darwinFixture = (scenario: Scenario = {}): Fixture => {
       if (body === undefined) throw Object.assign(new Error(`ENOENT ${path}`), { code: 'ENOENT' });
       return body;
     },
-    writeFile: (path, body) => void files.set(path, body),
+    writeFile: (path, body) => {
+      files.set(path, body);
+      modes.set(path, 0o600);
+    },
+    fileMode: (path) => (files.has(path) ? (modes.get(path) ?? 0o644) : null),
+    setFileMode: (path, mode) => void modes.set(path, mode),
     realpath: (path) => {
       if (!REAL.has(path)) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
       const link = Object.keys(LINKS).find((k) => path === k || path.startsWith(`${k}/`));
@@ -169,6 +189,7 @@ const darwinFixture = (scenario: Scenario = {}): Fixture => {
         `/Users/owner/Library/LaunchAgents/${unit}.plist`,
         '<plist><dict><key>Label</key><string>com.someone.else</string></dict></plist>',
       ),
+    widenAccess: (unit) => void modes.set(`/Users/owner/Library/LaunchAgents/${unit}.plist`, 0o644),
     restart: () => createDarwinHostAdapter(env),
   };
 };
@@ -360,6 +381,90 @@ describe.each(CASES)('%s', (_name, makeFixture) => {
       const status = await makeFixture().adapter.autostart_contract().status('never-installed');
       expect(status.state).toBe('not_installed');
       expect(status.manifest_digest).toBeNull();
+      expect(status.manifest_access).toBeNull();
+    });
+  });
+
+  /**
+   * THE UPGRADE CASE. A manifest is not only its bytes: who may READ it is part of the unit's
+   * state, because the body carries `plan.environment` verbatim and survives a reboot.
+   *
+   * The first fix for this narrowed the mode inside the host's write, and the write only happens
+   * when the body changed. So the exact case it was written for — the same plan re-installed after
+   * the adapter's mode policy changed, where `render` produces identical bytes — never reached it,
+   * and `install` answered `wrote: false`, `repair` answered `actions_taken: []`, and the file
+   * stayed readable by every local account with nothing anywhere saying so.
+   *
+   * Here rather than in the Darwin tests because the rule belongs to the contract: an adapter that
+   * narrows only on write passes every other assertion in this file. The Darwin tests keep the
+   * half only a real filesystem can prove, which is that the octal on disk is the one claimed.
+   */
+  describe('a manifest already in place is brought to the required access posture', () => {
+    const unit = 'autostart-upgraded-in-place';
+
+    const installed = async (f: Fixture) => {
+      const first = await f.adapter.autostart_contract().install(plan(unit, f.root));
+      expect(first.wrote).toBe(true);
+      // The write narrowed what it wrote, so nothing is left to narrow on an untouched install.
+      expect(first.restricted_access).toBeNull();
+      expect(first.status.manifest_access).toBe(REQUIRED_ACCESS);
+      return first;
+    };
+
+    it('reports the posture it observed, so a wrong one is visible from status alone', async () => {
+      const f = makeFixture();
+      await installed(f);
+      f.widenAccess(unit);
+      const status = await f.adapter.autostart_contract().status(unit);
+      expect(status.manifest_access).toBe(WIDE_ACCESS);
+      // Status OBSERVES. It reported the wide posture and left it exactly where it found it.
+      expect((await f.adapter.autostart_contract().status(unit)).manifest_access).toBe(WIDE_ACCESS);
+    });
+
+    it('install narrows it even though the body is byte-identical and nothing was written', async () => {
+      const f = makeFixture();
+      const first = await installed(f);
+      f.widenAccess(unit);
+      const again = await f.adapter.autostart_contract().install(plan(unit, f.root));
+      // Unchanged bytes: this is the case the write path cannot reach, which is the whole point.
+      expect(again.wrote).toBe(false);
+      expect(again.digest).toBe(first.digest);
+      expect(again.restricted_access).toMatch(/narrowed/);
+      expect(again.status.manifest_access).toBe(REQUIRED_ACCESS);
+    });
+
+    it('repair narrows it, and never reports an empty action list while leaving it wide', async () => {
+      const f = makeFixture();
+      await installed(f);
+      f.widenAccess(unit);
+      const repaired = await f.adapter.autostart_contract().repair(plan(unit, f.root));
+      expect(repaired.actions_taken).toHaveLength(1);
+      expect(repaired.actions_taken[0]).toMatch(/narrowed/);
+      expect(repaired.status.manifest_access).toBe(REQUIRED_ACCESS);
+      expect(repaired.needs_owner).toBe(true);
+    });
+
+    it('is idempotent: a second pass finds nothing to narrow and says nothing', async () => {
+      const f = makeFixture();
+      await installed(f);
+      f.widenAccess(unit);
+      await f.adapter.autostart_contract().repair(plan(unit, f.root));
+      const second = await f.adapter.autostart_contract().repair(plan(unit, f.root));
+      expect(second.actions_taken).toEqual([]);
+      expect(
+        (await f.adapter.autostart_contract().install(plan(unit, f.root))).restricted_access,
+      ).toBeNull();
+    });
+
+    it('survives the gateway restarting: the posture is on the host, not in the adapter', async () => {
+      const f = makeFixture();
+      await installed(f);
+      f.widenAccess(unit);
+      const repaired = await f.restart().autostart_contract().repair(plan(unit, f.root));
+      expect(repaired.actions_taken[0]).toMatch(/narrowed/);
+      expect((await f.restart().autostart_contract().status(unit)).manifest_access).toBe(
+        REQUIRED_ACCESS,
+      );
     });
   });
 

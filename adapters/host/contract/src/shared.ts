@@ -313,6 +313,20 @@ export type ManifestHost = {
   readonly procedureFor: (unit_id: string) => OwnerProcedure;
   readonly read: (path: string) => string | null;
   readonly write: (path: string, body: string) => void;
+  /**
+   * Who may read the stored manifest, in this host's own spelling, or null when there is no file
+   * or no posture to report. Observation only: `status` must never change what it describes.
+   */
+  readonly readAccess: (path: string) => string | null;
+  /**
+   * Bring an EXISTING manifest to the access posture this host requires, whatever its body says,
+   * and return a sentence describing what changed — null when nothing needed changing.
+   *
+   * Required, not optional. A host that narrows only on write has a manifest it wrote LAST version
+   * still sitting at the older posture, and an optional hook is one a second adapter can forget in
+   * silence. Making it part of the type means the compiler asks the question.
+   */
+  readonly restrictAccess: (path: string) => string | null;
 };
 
 /**
@@ -334,6 +348,7 @@ export const createManifestAutostart = (host: ManifestHost): AutostartContract =
       manifest_path: stored === null ? null : path,
       manifest_digest: stored === null ? null : digestOf(stored),
       expected_digest: expected === null ? null : digestOf(expected),
+      manifest_access: stored === null ? null : host.readAccess(path),
       // Always true: registration is unobserved, so autostart is never provably working from here.
       needs_owner: true,
       procedure: host.procedureFor(unit_id),
@@ -362,9 +377,16 @@ export const createManifestAutostart = (host: ManifestHost): AutostartContract =
       assertNotForeign(path, existing);
       const wrote = existing !== body;
       if (wrote) host.write(path, body);
+      // UNCONDITIONAL, and that is the whole of the point. `write` narrows what it writes, so a
+      // manifest whose body already matches never reaches that narrowing -- which is exactly the
+      // case this method is for: the same plan re-installed over a file an OLDER ADAPTER VERSION
+      // left at a wider posture, where `render` produces identical bytes and nothing would write.
+      // Placed after `assertNotForeign`, so it can only ever touch a manifest this code wrote.
+      const restricted_access = host.restrictAccess(path);
       return {
         manifest_path: path,
         wrote,
+        restricted_access,
         digest: digestOf(body),
         status: statusOf(plan.unit_id, body),
         procedure: host.procedureFor(plan.unit_id),
@@ -383,6 +405,13 @@ export const createManifestAutostart = (host: ManifestHost): AutostartContract =
         host.write(path, body);
         actions.push(before === null ? `wrote ${path}` : `rewrote divergent ${path}`);
       }
+      // Same call as `install` makes, and here it is load-bearing twice over. `actions_taken: []`
+      // is itself a claim -- "nothing needed doing" -- so a repair that returned it while leaving a
+      // world-readable manifest in place would be reporting a state it did not leave behind
+      // (invariant 1). The narrowing is appended rather than merged into the rewrite line, because
+      // the two happen independently: a manifest can need one, the other, both or neither.
+      const restricted = host.restrictAccess(path);
+      if (restricted !== null) actions.push(restricted);
       return {
         status: statusOf(plan.unit_id, body),
         actions_taken: actions,
