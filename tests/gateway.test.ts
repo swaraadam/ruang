@@ -271,6 +271,39 @@ describe('the browser boundary: one canonical origin (§4.2)', () => {
     expect(res.status).toBe(200);
   });
 
+  /**
+   * The `own` branch was built from `request.scheme`, which is what THIS process received --
+   * plaintext http behind the tunnel. With `Host` set to the canonical host (rule 1 allows it),
+   * `own` became the http form of an https canonical origin, and `http://h` and `https://h` are two
+   * origins (RFC 6454). Executed before the fix: 200 on the route and **101 with the full durable
+   * log** on the stream. Unreachable only while the placeholder hostname resolves nowhere, which is
+   * a property of the naming gate and not of this code.
+   */
+  it('refuses the http form of an https canonical origin on both doors', async () => {
+    const db = seeded();
+    const downgraded = `http://${canonicalHost}`;
+    const { url } = await started(db);
+    const res = await get(url, { Host: canonicalHost, Origin: downgraded });
+    expect(res.status).toBe(403);
+    expect(res.body).not.toContain('dev-project');
+    await closeRunning();
+
+    const frame = await openStream(db, '0', undefined, () => ({
+      origin: downgraded,
+      headers: { Host: canonicalHost },
+    }));
+    expect(frame.kind).toBe('refused-upgrade');
+    expect(frame.status).toBe(403);
+    expect(frame.events).toBeUndefined();
+  });
+
+  it('still accepts its own loopback origin, which is what the `own` branch is for', async () => {
+    // The fix narrows `own` to loopback; it must not narrow it to nothing. `url` IS this
+    // instance's origin, so this is the renderer's own same-origin fetch.
+    const { url } = await started(seeded());
+    expect((await get(url, { Origin: url })).status).toBe(200);
+  });
+
   it('refuses the upgrade itself for every hostile handshake, so no frame is ever written', async () => {
     const db = seeded();
     const hostile: readonly [string, (origin: string) => Record<string, unknown>][] = [
@@ -356,6 +389,33 @@ describe('the event stream resumes from a sequence (§15.2)', () => {
       expect(frame.events).toBeUndefined();
       await closeRunning();
     }
+  });
+
+  /**
+   * The same two doors, against the hole shape `COUNT(*) = MAX(seq)` could not see. One row at
+   * `seq <= 0` restores the count over a deleted interior event, so the predicate answered "whole"
+   * and this stream replayed straight across it while `/api/office/state` still answered 409.
+   * Executed before the fix: `frame=events`, seqs 6-20. The deleted-row case above passes either
+   * way -- it is the padded one that distinguishes the predicates.
+   */
+  it.each([
+    ['a padding row at seq 0', 0],
+    ['a padding row at seq -1', -1],
+  ])('refuses a holed log that %s makes look complete', async (_label, pad) => {
+    const db = seeded();
+    db.prepare(`DELETE FROM event WHERE owner_id = ? AND seq = 5`).run(OWNER);
+    db.prepare(
+      `INSERT INTO event (owner_id,seq,org_node_id,ts,type,actor_member_id,payload,artifact_refs)
+       VALUES (?,?, 'dev-org-root','t','task.created','dev-member-agent','{}','[]')`,
+    ).run(OWNER, pad);
+
+    const { app } = await started(db);
+    expect((await app.inject({ method: 'GET', url: '/api/office/state' })).statusCode).toBe(409);
+    await closeRunning();
+
+    const frame = await openStream(db, '5');
+    expect(frame.kind, 'the stream must refuse what the snapshot route refuses').toBe('resync');
+    expect(frame.events).toBeUndefined();
   });
 
   it('rejects an unvalidated resume point at the boundary with a typed error', async () => {

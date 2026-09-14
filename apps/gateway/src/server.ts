@@ -186,7 +186,13 @@ export const boundaryRefusal = (
   const origin = request.origin?.trim().toLowerCase();
   if (origin !== undefined && origin !== '') {
     if (origin === 'null') return 'Origin: null is not an origin this gateway serves';
-    const own = `${request.scheme.toLowerCase()}://${host}`;
+    // `own` is the LOOPBACK branch and only that. `request.scheme` is what this process received,
+    // which is plaintext http behind the tunnel, so building it from any Host rule 1 allowed made
+    // `http://<canonical-host>` an accepted origin against an `https` canonical one. Those are two
+    // origins (RFC 6454), and this file exists to enforce one. It is unreachable only while the
+    // placeholder hostname resolves nowhere; that is an accident of the naming gate, not a property
+    // of the code. On loopback the equality is genuine — the scheme received IS the scheme served.
+    const own = LOOPBACK.has(hostnameOf(host)) ? `${request.scheme.toLowerCase()}://${host}` : null;
     if (origin !== canonical.origin && origin !== own) {
       return 'Origin is not the canonical origin of this gateway';
     }

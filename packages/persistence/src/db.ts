@@ -86,39 +86,51 @@ const tableCount = (names: readonly string[]): string =>
  * with no projects. Existence was never identity, and an empty office is a claim durable truth
  * never made (invariant 1).
  *
- * So identity is proved first, and proved through a READ-ONLY handle: SQLite will not write through
- * one, so a file that fails the proof is byte-for-byte unchanged when this throws. The proof is the
- * schema itself — every table, column and constraint the migrations produce, plus `user_version`.
- * That is a stronger marker than a marker table would be (a table named by this code proves only
- * that something created a table by that name) and it needs no migration to introduce.
+ * So identity is proved first. The proof is the schema itself — every table, column and constraint
+ * the migrations produce, plus `user_version`. That is a stronger marker than a marker table would
+ * be (a table named by this code proves only that something created a table by that name) and it
+ * needs no migration to introduce.
  *
- * The re-open afterwards is a read-write handle on a path that has just been proved, and `migrate`
- * is then a no-op because the version already matches. A file swapped between the two opens would
- * defeat that; on a single-owner local machine the swapper would already own the process.
+ * **It is proved on the handle that is then used, and there is exactly one.** Proving through a
+ * read-only probe and re-opening read-write afterwards resolved `path` twice, and a symlink flipped
+ * between the two opens turned the refusal into `migrate()` writing 26 tables into the file that
+ * had just failed — a plain flip loop won that race in seconds, and the attacker needs write access
+ * to the directory, not to this process. One handle removes the window: the descriptor the
+ * verification read is the descriptor `migrate` writes through, so no rename can come between them.
+ * Opening read-write writes nothing by itself; the pragmas and `migrate` are this path's only
+ * writes and both are past the refusal. `migrate` is then provably a no-op — same inode, version
+ * already `LATEST_VERSION`.
+ *
+ * The one residue, stated because the previous version of this comment claimed the opposite: when
+ * the refused file is a WAL database whose writer crashed, SQLite folds the orphaned `-wal` into it
+ * as this handle closes. That is recovery of already-committed frames — bytes move, no row does —
+ * and it is what that file's own next reader would have done. The earlier read-only probe avoided
+ * it and instead left `-shm`/`-wal` sidecars behind, so "byte-for-byte as it was found" was never
+ * true either; it was untrue in a quieter way.
  */
 export const openControlPlaneDatabase = (path: string): Db => {
-  let probe: Db | null = null;
+  let db: Db | null = null;
   let version: number;
   let fingerprint: string;
   try {
-    probe = new Database(path, { readonly: true, fileMustExist: true });
+    db = new Database(path, { fileMustExist: true });
     // Inside the same `try` as the open, because better-sqlite3 opens lazily: a file that is not a
     // database at all constructs without complaint and fails on the first read. Catching only the
     // constructor let `SqliteError: file is not a database` escape as an unhandled startup crash.
-    version = currentVersion(probe);
-    fingerprint = schemaFingerprint(probe);
+    version = currentVersion(db);
+    fingerprint = schemaFingerprint(db);
   } catch (cause) {
+    db?.close();
     throw new ForeignDatabaseError(
       `${path} could not be read as a control-plane database: ${(cause as Error).message}`,
       { cause },
     );
-  } finally {
-    probe?.close();
   }
 
   const want = expectedFingerprint();
   if (version !== LATEST_VERSION || fingerprint !== want) {
     const found = tableNames(fingerprint);
+    db.close();
     throw new ForeignDatabaseError(
       `${path} is not this system's control-plane database.\n` +
         `  expected: schema version ${String(LATEST_VERSION)}, ${tableCount(tableNames(want))}\n` +
@@ -126,10 +138,17 @@ export const openControlPlaneDatabase = (path: string): Db => {
         (found.length === 0
           ? ''
           : ` (${found.slice(0, 4).join(', ')}${found.length > 4 ? ', …' : ''})`) +
-        '\n  Nothing was written to it: the check reads through a read-only handle precisely so that\n' +
-        '  a file which turns out to belong to something else is left exactly as it was found.',
+        '\n  Nothing here wrote to it: the refusal is before the pragmas and the migration, which are\n' +
+        '  the only writes this path makes, so no row is added, changed or removed. SQLite itself may\n' +
+        '  still fold an orphaned -wal back into the file as the handle closes — bytes, never data.',
     );
   }
 
-  return openDatabase(path);
+  // Past the refusal, so these are writes to a proved control-plane database. Same handle
+  // throughout: see the note above on why the second open was the hole.
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
+  migrate(db);
+  return db;
 };
