@@ -7,10 +7,20 @@ import {
   type DelegationRequest,
   authorizeDelegation,
   carveChildCeiling,
+  decide,
   loadPolicy,
   parentRemainingCents,
 } from '../src/index.js';
-import { LEAD, OWNER, WORKER, sources, withFields } from './fixture.js';
+import {
+  LEAD,
+  NODE_ENG,
+  NODE_ROOT,
+  OWNER,
+  PROJECT,
+  WORKER,
+  sources,
+  withFields,
+} from './fixture.js';
 
 const PARENT: BudgetPosition = { ceiling_cents: 5000, spent_cents: 1000, reserved_cents: 500 };
 
@@ -201,5 +211,102 @@ describe('invariant 6: a child budget is carved from parent remaining, never add
     expect(
       authorizeDelegation(loadPolicy(sources()), request({ requested_ceiling_cents: 901 })),
     ).toMatchObject({ outcome: 'deny', reason: 'exceeds_role_limit' });
+  });
+});
+
+/**
+ * The delegate must reach the scope it is tasked at.
+ *
+ * `authorizeDelegation` checked only that the delegate sits inside the DELEGATOR's subtree, never
+ * that it can act where the task points. Every case below is one where `decide` refuses, so a
+ * delegation that allowed it would let the caller obtain through the delegation path a scope the
+ * direct path denies -- with `capabilities` and `ceiling_cents` attached, so it reads as a grant.
+ */
+describe('the delegate must reach the scope it is tasked at', () => {
+  const NODE_ART = {
+    id: 'root/art',
+    owner_id: OWNER,
+    parent_id: 'root',
+    name: 'art',
+    policy_overrides: null,
+  };
+
+  const PROJECT_ART = {
+    id: 'proj-art',
+    owner_id: OWNER,
+    org_node_id: 'root/art',
+    change_unit: 'lines',
+    change_budget: 250,
+    evidence_floor: 'strong',
+  };
+
+  const withArt = () =>
+    loadPolicy(
+      sources({
+        orgNodes: [NODE_ROOT, NODE_ENG, NODE_ART],
+        projects: [PROJECT, PROJECT_ART],
+      }),
+    );
+
+  it('refuses an org-node scope in a sibling subtree the delegate does not sit under', () => {
+    expect(
+      authorizeDelegation(
+        withArt(),
+        request({ scope: { kind: 'org_node', org_node_id: 'root/art' } }),
+      ),
+    ).toMatchObject({
+      outcome: 'deny',
+      reason: 'out_of_org_scope',
+      detail: expect.stringContaining('root/eng') as unknown as string,
+    });
+  });
+
+  it('refuses a project in a sibling subtree, and says out_of_org_scope rather than unresolved_contract', () => {
+    const decision = authorizeDelegation(
+      withArt(),
+      request({ scope: { kind: 'project', project_id: 'proj-art' } }),
+    );
+    expect(decision).toMatchObject({ outcome: 'deny', reason: 'out_of_org_scope' });
+    // The old behaviour denied this too, but only as a side effect of the loader computing no
+    // contract for an out-of-scope pair. Reporting a missing contract for what is really a scope
+    // refusal sends a reader looking for config that was never supposed to exist.
+    expect(decision).not.toMatchObject({ reason: 'unresolved_contract' });
+  });
+
+  it('agrees with decide: neither path grants what the other refuses', () => {
+    const policy = withArt();
+    for (const scope of [
+      { kind: 'org_node', org_node_id: 'root/art' },
+      { kind: 'project', project_id: 'proj-art' },
+    ] as const) {
+      const direct = decide(policy, {
+        owner_id: OWNER,
+        member_id: 'm-worker',
+        capability: 'read_project',
+        scope,
+      });
+      const delegated = authorizeDelegation(policy, request({ scope }));
+      expect(direct.outcome).toBe('deny');
+      expect(delegated.outcome).toBe('deny');
+      expect(delegated).toMatchObject({ reason: 'out_of_org_scope' });
+    }
+  });
+
+  it('still allows an org-node scope the delegate does sit under', () => {
+    expect(
+      authorizeDelegation(
+        withArt(),
+        request({ scope: { kind: 'org_node', org_node_id: 'root/eng' } }),
+      ),
+    ).toMatchObject({ outcome: 'allow', delegate_role_id: 'worker-v1', ceiling_cents: 500 });
+  });
+
+  it('refuses an org node that does not exist rather than reading it as unscoped', () => {
+    expect(
+      authorizeDelegation(
+        withArt(),
+        request({ scope: { kind: 'org_node', org_node_id: 'root/nope' } }),
+      ),
+    ).toMatchObject({ outcome: 'deny', reason: 'unknown_org_node' });
   });
 });

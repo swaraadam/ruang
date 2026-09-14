@@ -17,6 +17,7 @@
  * the other.
  */
 import { type DenyReason, type PolicyDecision, decide, effectiveContract } from './capability.js';
+import type { RolePolicy } from './config.js';
 import { key, type LoadedPolicy } from './load.js';
 import { asOverride, tighten } from './restriction.js';
 import {
@@ -28,6 +29,7 @@ import {
   type RoleId,
   type Scope,
   isCapability,
+  unreachable,
 } from './vocabulary.js';
 
 /**
@@ -207,6 +209,11 @@ export const authorizeDelegation = (
     capabilities.push(requested);
   }
 
+  // Before any contract or money is computed: can the delegate act here at all? `decide` would
+  // refuse, so `authorizeDelegation` must refuse for the same reason and with the same word.
+  const unreachableScope = delegateReaches(policy, owner_id, delegate, scope);
+  if (unreachableScope !== null) return unreachableScope;
+
   const contract = contractFor(policy, owner_id, delegator.id, delegate.id, scope);
   if (contract.outcome === 'deny') return contract.decision;
 
@@ -234,6 +241,74 @@ export const authorizeDelegation = (
 type ContractCheck =
   | { readonly outcome: 'ok'; readonly contract: EffectiveContract | null }
   | { readonly outcome: 'deny'; readonly decision: DelegationDecision };
+
+/**
+ * The containment `decide` performs, applied to the DELEGATE against the scope it is tasked at.
+ *
+ * Without this, `authorizeDelegation` answered a different question from `decide`. The check above
+ * establishes that the delegate sits inside the *delegator's* subtree; it never establishes that the
+ * delegate can act where the task points. An org-node scope therefore returned `allow` with a carved
+ * ceiling for a role `decide` refuses with `out_of_org_scope` -- and the result carries
+ * `capabilities` and `ceiling_cents`, so it reads as a grant to any caller that does not
+ * independently re-ask `decide`. Two functions in one package disagreeing about the same
+ * authorization question is the shape invariant 4 exists to rule out.
+ *
+ * The project branch was not safe either, only accidentally denied: the loader computes no contract
+ * for an out-of-scope pair, so it surfaced as `unresolved_contract`, reporting a missing contract for
+ * what is really a scope refusal. Checking both kinds here makes the refusal say what it means.
+ *
+ * Returns the refusal, or `null` when the delegate reaches the scope.
+ */
+const delegateReaches = (
+  policy: LoadedPolicy,
+  owner_id: OwnerId,
+  delegate: RolePolicy,
+  scope: Scope,
+): DelegationDecision | null => {
+  switch (scope.kind) {
+    case 'org_node': {
+      const chain = policy.ancestry.get(key(owner_id, scope.org_node_id));
+      if (chain === undefined) {
+        return refuse(
+          'unknown_org_node',
+          `no org node '${scope.org_node_id}' under owner '${owner_id}'`,
+        );
+      }
+      if (!chain.includes(delegate.org_node_id)) {
+        return refuse(
+          'out_of_org_scope',
+          `delegate '${delegate.name}' sits at '${delegate.org_node_id}', which is not on the chain to '${scope.org_node_id}'`,
+        );
+      }
+      return null;
+    }
+    case 'project': {
+      const project = policy.projects.get(key(owner_id, scope.project_id));
+      if (project === undefined) {
+        return refuse(
+          'unknown_project',
+          `no project '${scope.project_id}' under owner '${owner_id}'`,
+        );
+      }
+      const chain = policy.ancestry.get(key(owner_id, project.org_node_id));
+      if (chain === undefined) {
+        return refuse(
+          'unknown_org_node',
+          `project '${project.id}' names org node '${project.org_node_id}'`,
+        );
+      }
+      if (!chain.includes(delegate.org_node_id)) {
+        return refuse(
+          'out_of_org_scope',
+          `delegate '${delegate.name}' sits at '${delegate.org_node_id}', which is not on the chain to project '${project.id}'`,
+        );
+      }
+      return null;
+    }
+    default:
+      return unreachable(scope);
+  }
+};
 
 /** §7.2 applied down the delegation edge: the delegate's contract may tighten, never loosen. */
 const contractFor = (
