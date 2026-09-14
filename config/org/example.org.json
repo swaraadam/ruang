@@ -1,0 +1,20 @@
+{
+  "_example": "EXAMPLE DATA, not a deployment. Seam C org tree (blueprint 7.1). Ids are placeholders; naming clearance is an open Phase -1 gate (config/naming.ts), so nothing here may be treated as a cleared identifier.",
+  "policy_schema_version": 1,
+  "org_nodes": [
+    {
+      "id": "studio",
+      "owner_id": "owner-example",
+      "parent_id": null,
+      "name": "studio",
+      "policy_overrides": null
+    },
+    {
+      "id": "studio/engineering",
+      "owner_id": "owner-example",
+      "parent_id": "studio",
+      "name": "engineering",
+      "policy_overrides": null
+    }
+  ]
+}
