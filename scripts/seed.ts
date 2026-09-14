@@ -77,9 +77,21 @@ export const resetRows = (db: Db): void => {
 export type SeedSummary = {
   readonly ownerId: string;
   readonly lastSeq: number;
+  readonly tasks: readonly { id: string; state: string; basis: string }[];
 };
 
 type Row = Readonly<Record<string, string | number | null>>;
+type Capture = 'reported' | 'probed' | 'unknown';
+type TaskSeed = {
+  id: string;
+  title: string;
+  execution_class: 'mechanical' | 'standard' | 'deep';
+  expected_reversibility: 'revertible' | 'compensable' | 'irreversible';
+  state: string;
+  basis_ref: string;
+  inputs: readonly { resource_id: string; version: string }[];
+};
+
 const writeSeedRows = (db: Db): SeedSummary => {
   let tick = 0;
   const at = (): string => new Date(T0 + tick++ * 60_000).toISOString();
@@ -180,7 +192,207 @@ const writeSeedRows = (db: Db): SeedSummary => {
   insert('project', { id: PROJECT, ...project, exclusive_locks: JSON.stringify([LOCK]) });
   on(null)('project.registered', { project_id: PROJECT, ...project }, 'owner');
 
-  return { ownerId: OWNER, lastSeq: latestSeq(db, OWNER) };
+  // --- tasks ----------------------------------------------------------------------------------
+  // v1 puts no CHECK on task.state, so these strings are the vocabulary the canon uses verbatim:
+  // `needs-repair` (CLAUDE.md invariant 3) and `blocked_basis_unknown` (fail-closed SKILL).
+  const declare = (t: TaskSeed): void => {
+    const { id, title, execution_class, expected_reversibility, basis_ref, inputs } = t;
+    insert('task', {
+      id,
+      project_id: PROJECT,
+      role_id: ROLE,
+      title,
+      basis_ref,
+      basis_inputs: JSON.stringify(inputs),
+      execution_class,
+      expected_reversibility,
+      acceptance_criteria: JSON.stringify([`${title} is demonstrable from durable state`]),
+      state: t.state,
+      created_at: at(),
+    });
+    const e = on(id);
+    const created = { task_id: id, project_id: PROJECT, role_id: ROLE, title };
+    e('task.created', { ...created, execution_class, expected_reversibility }, 'owner');
+    e('task.basis.captured', { task_id: id, basis_ref, inputs, captured_at: at() });
+  };
+
+  const dispatch = (
+    task: string,
+    attempt: string,
+    basis_ref: string,
+    o: { sandbox?: string; session?: string; capture: Capture; lifecycle: string },
+  ): void => {
+    const sandbox_id = o.sandbox ?? null;
+    const e = on(task, attempt);
+    e(
+      'task.dispatched',
+      { task_id: task, attempt_id: attempt, runtime_id: RUNTIME, basis_ref },
+      'owner',
+    );
+    if (sandbox_id !== null) {
+      const kind = 'isolated-copy';
+      const opened = { sandbox_id, task_id: task, attempt_id: attempt, adapter_id: 'code', kind };
+      insert('sandbox', {
+        id: sandbox_id,
+        project_id: PROJECT,
+        adapter: 'code',
+        kind,
+        safety_record_ref: null,
+        opened_at: at(),
+      });
+      e('sandbox.opened', opened);
+    }
+    insert('attempt', {
+      id: attempt,
+      task_id: task,
+      sandbox_id,
+      runtime_id: RUNTIME,
+      session_id: o.session ?? null,
+      session_capture_method: o.capture,
+      // An unverifiable session says so. A timestamp here would assert a check that never happened.
+      session_last_verified_at: o.capture === 'unknown' ? null : at(),
+      lifecycle: o.lifecycle,
+      started_at: at(),
+    });
+    e('attempt.started', { attempt_id: attempt, task_id: task, runtime_id: RUNTIME, sandbox_id });
+  };
+
+  // T1 — dispatched and running against a fresh basis.
+  declare({
+    id: 'dev-task-01',
+    title: 'Add a liveness probe to the session watcher',
+    execution_class: 'standard',
+    expected_reversibility: 'revertible',
+    state: 'running',
+    basis_ref: 'basis-0001',
+    inputs: [{ resource_id: 'resource/session-watcher', version: 'v-4c11' }],
+  });
+  dispatch('dev-task-01', 'dev-attempt-01', 'basis-0001', {
+    sandbox: 'dev-sandbox-01',
+    session: 'dev-session-01',
+    capture: 'reported',
+    lifecycle: 'running',
+  });
+
+  // T2 — a named stale reason. Stale refuses dispatch and asks for a re-brief; it does not guess.
+  declare({
+    id: 'dev-task-02',
+    title: 'Reconcile the notification channel list',
+    execution_class: 'deep',
+    expected_reversibility: 'revertible',
+    state: 'blocked_basis_stale',
+    basis_ref: 'basis-0002',
+    inputs: [{ resource_id: 'resource/notification-channels', version: 'v-77b2' }],
+  });
+  on('dev-task-02')('task.stale', {
+    task_id: 'dev-task-02',
+    basis_ref: 'basis-0002',
+    staleness: 'stale',
+    reason: 'resource/notification-channels moved from v-77b2 to v-91d0 after basis capture',
+    stale_inputs: ['resource/notification-channels'],
+  });
+
+  // T3 — THE HONEST UNKNOWN (invariants 1 and 4).
+  //
+  // A basis was captured, so `basis_ref` is set: claiming none exists would be its own lie. What is
+  // unknown is whether that basis still holds — one consulted resource could not be re-probed, so
+  // the answer is neither `fresh` nor `stale`. `stale_inputs` is empty **not because nothing
+  // changed** but because nothing is *known* to have changed; the field a renderer must read is
+  // `staleness`. Fail closed: no `task.dispatched` follows and no attempt exists. Rendering this as
+  // fresh, or hiding it because it has no attempt to draw, is the lie this task exists to catch.
+  declare({
+    id: 'dev-task-03',
+    title: 'Retire the legacy preview route',
+    execution_class: 'standard',
+    expected_reversibility: 'revertible',
+    state: 'blocked_basis_unknown',
+    basis_ref: 'basis-0003',
+    inputs: [
+      { resource_id: 'resource/preview-routes', version: 'v-8f2c' },
+      { resource_id: 'resource/gateway-contract', version: 'v-31ab' },
+    ],
+  });
+  on('dev-task-03')('task.stale', {
+    task_id: 'dev-task-03',
+    basis_ref: 'basis-0003',
+    staleness: 'unknown',
+    reason: 're-probe of resource/gateway-contract did not complete; staleness is indeterminate',
+    stale_inputs: [],
+  });
+
+  // T4 — reconciliation went unknown while an exclusive lock was held.
+  declare({
+    id: 'dev-task-04',
+    title: 'Rebuild the asset bundle',
+    execution_class: 'mechanical',
+    expected_reversibility: 'compensable',
+    state: 'needs-repair',
+    basis_ref: 'basis-0004',
+    inputs: [{ resource_id: 'resource/bundle-manifest', version: 'v-02da' }],
+  });
+  dispatch('dev-task-04', 'dev-attempt-04', 'basis-0004', {
+    capture: 'unknown',
+    lifecycle: 'frozen',
+  });
+  const e4 = on('dev-task-04', 'dev-attempt-04');
+  // v1 identifies a lock by (owner_id, name) and gives it no id column, so `lock_id` is the name.
+  // Minting a separate identifier the schema has nowhere to store would make the event unjoinable.
+  insert('lock', {
+    name: LOCK,
+    holder_task_id: 'dev-task-04',
+    holder_attempt_id: 'dev-attempt-04',
+    disposition: 'held-by-frozen-task',
+    acquired_at: at(),
+  });
+  e4('lock.acquired', {
+    lock_id: LOCK,
+    lock_name: LOCK,
+    holder_task_id: 'dev-task-04',
+    acquired_at: at(),
+  });
+  e4('adapter.divergence', {
+    adapter_id: 'code',
+    project_id: PROJECT,
+    expected: 'bundle manifest at v-02da',
+    observed: 'manifest unreadable',
+    reconciliation: 'needs_repair',
+  });
+  const subject = { subject_kind: 'task', subject_id: 'dev-task-04' } as const;
+  const allowed_operations = ['reprobe', 'adopt', 'reset', 'release-frozen-lock'];
+  const probes = ['read bundle manifest', 'verify runtime session'];
+  e4('state.needs_repair', {
+    ...subject,
+    reason: 'reconciliation became unknown while the exclusive lock was held',
+    frozen_lock_ids: [LOCK],
+    allowed_operations,
+  });
+  insert('repair_case', {
+    id: 'dev-repair-04',
+    task_id: 'dev-task-04',
+    probes: JSON.stringify(probes),
+    affected_resources: JSON.stringify(['resource/bundle-manifest']),
+    frozen_locks: JSON.stringify([LOCK]),
+    allowed_ops: JSON.stringify(allowed_operations),
+    // Unresolved, and only an owner may resolve it. The Director never clears `needs-repair`.
+    resolution: null,
+    opened_at: at(),
+  });
+  e4('repair.requested', { repair_id: 'dev-repair-04', ...subject, probes });
+
+  return {
+    ownerId: OWNER,
+    lastSeq: latestSeq(db, OWNER),
+    tasks: [
+      { id: 'dev-task-01', state: 'running', basis: 'fresh' },
+      { id: 'dev-task-02', state: 'blocked_basis_stale', basis: 'stale (named reason)' },
+      {
+        id: 'dev-task-03',
+        state: 'blocked_basis_unknown',
+        basis: 'UNKNOWN — never render as fresh',
+      },
+      { id: 'dev-task-04', state: 'needs-repair', basis: 'fresh, lock held-by-frozen-task' },
+    ],
+  };
 };
 
 /**
@@ -232,6 +444,8 @@ const main = (): void => {
   console.log(`\nevent log replayed from seq 0 (${replay.length} events)`);
   for (const e of replay) console.log(`  ${String(e.seq).padStart(3)}  ${e.type}`);
 
+  console.log('\ntasks');
+  for (const t of summary.tasks) console.log(`  ${t.id}  ${t.state.padEnd(22)} basis ${t.basis}`);
   console.log(`\nsnapshot sequence: ${summary.lastSeq}\n${BANNER}\n`);
   db.close();
 };
