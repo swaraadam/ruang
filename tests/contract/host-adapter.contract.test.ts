@@ -610,9 +610,34 @@ describe('invariant 4 at the edges of the shared implementation', () => {
   it('folds the name at that choke point too, by the same rule as the session deny-list', () => {
     // The sibling comparison had the same correctness bug: an exact match decided by code points,
     // against a filesystem that opens `/usr/bin/LAUNCHCTL` and `/usr/bin/launchctl` as one file.
-    // One folding rule, used on both sides of both comparisons, so a fix lands once.
+    // One folding rule, used on both sides of both comparisons, so a fix lands once -- the
+    // both-sides half of that sentence is what the last describe in this file pins, because it was
+    // a claim this comment made and the code did not keep.
     expect(() => guard(['/usr/bin/LAUNCHCTL', 'load'])).toThrow(/owner-run only/);
     expect(() => guard(['\uFF53udo', '-v'])).toThrow(/owner-run only/);
     expect(() => guard(['/usr/bin/tmux', 'list-sessions'])).not.toThrow();
+  });
+});
+
+describe('the launch guard folds both sides of its comparison', () => {
+  /**
+   * Pinning a claim the code did not keep. Every name in `GUARDED_BINARIES` is already lowercase
+   * ASCII, so folding only argv[0] matched today by accident of the list rather than by
+   * construction -- an entry added later in mixed case would have stopped matching silently. The
+   * list is therefore supplied here rather than taken from the constant: that is the only way to
+   * drive the comparison with an entry the canonical list cannot contain.
+   */
+  it('matches an entry that is not itself already in folded form', () => {
+    expect(() => guard(['/usr/bin/rmtrash'], ['RmTrash'])).toThrow(/owner-run only/);
+    expect(() => guard(['/usr/bin/RMTRASH'], ['rmtrash'])).toThrow(/owner-run only/);
+    // The same entry reached by a compatibility spelling, which is what folding is for.
+    expect(() => guard(['ｒmtrash'], ['RmTrash'])).toThrow(/owner-run only/);
+    expect(() => guard(['/usr/bin/tmux'], ['RmTrash'])).not.toThrow();
+  });
+
+  it('keeps the host list as the default, so the one choke point is unchanged', () => {
+    for (const binary of GUARDED_BINARIES) {
+      expect(() => guard([`/usr/bin/${binary.toUpperCase()}`])).toThrow(/owner-run only/);
+    }
   });
 });

@@ -22,7 +22,10 @@
  */
 import { spawnSync } from 'node:child_process';
 import {
+  closeSync,
+  fchmodSync,
   mkdirSync,
+  openSync,
   readFileSync,
   realpathSync,
   statSync,
@@ -62,20 +65,35 @@ export type DarwinEnv = {
  * agent that later "just adds a load step" here fails a test rather than shipping it. It says
  * nothing about a process started by any other route — see the header.
  *
- * Every entry is a lowercase ASCII identifier, which is what lets `foldProgramName` decide the
- * comparison; `GUARDED_BINARIES` and `refuseSessionCommand`'s `guarded` are the same list.
+ * Every entry must be an ASCII identifier, because this same list is handed to
+ * `refuseSessionCommand`, whose comparison has no answer for a folded name outside ASCII and
+ * refuses rather than guessing. CASE is not a requirement: `guard` folds the entry as well as the
+ * candidate, so an entry added in mixed case still matches. It used to be a requirement in effect
+ * and nowhere in the code -- see `guard`.
  */
 export const GUARDED_BINARIES = ['launchctl', 'sudo', 'defaults', 'systemsetup', 'csrutil'];
 
 export class GuardedCommandError extends Error {}
 
-export const guard = (argv: readonly string[]): void => {
-  // Folded by the contract's rule rather than compared raw. This is the sibling of the session
-  // deny-list and had the same correctness bug: a comparison decided by code points, against a
-  // volume that opens `/usr/bin/LAUNCHCTL` and `/usr/bin/launchctl` as one file. One rule, imported
-  // rather than re-spelled, so the next folding fix lands in one place.
+/**
+ * The one choke point. `guarded` defaults to the list above; `run` never passes another, and the
+ * parameter exists for the same reason `refuseSessionCommand` takes one -- the host owns the names,
+ * this function owns the comparison -- which is also what makes the comparison testable against an
+ * entry the canonical list cannot contain.
+ */
+export const guard = (
+  argv: readonly string[],
+  guarded: readonly string[] = GUARDED_BINARIES,
+): void => {
+  // Folded on BOTH SIDES by the contract's rule rather than compared raw. This is the sibling of
+  // the session deny-list and had the same correctness bug: a comparison decided by code points,
+  // against a volume that opens `/usr/bin/LAUNCHCTL` and `/usr/bin/launchctl` as one file. Folding
+  // only the candidate and matching with `includes` fixed the reported half and left the other one
+  // resting on a property of the DATA -- every entry happens to be lowercase ASCII today -- so an
+  // entry added later in mixed case would have stopped matching in silence. One rule, imported
+  // rather than re-spelled, applied to both operands, so the next folding fix lands in one place.
   const binary = foldProgramName(argv[0] ?? '');
-  if (GUARDED_BINARIES.includes(binary)) {
+  if (guarded.some((g) => foldProgramName(g) === binary)) {
     throw new GuardedCommandError(
       `${binary} is owner-run only: this adapter prints the procedure, it never executes it`,
     );
@@ -111,9 +129,43 @@ export const defaultDarwinEnv = (overrides: Partial<DarwinEnv> = {}): DarwinEnv 
       };
     },
     readFile: (path) => readFileSync(path, 'utf8'),
+    /**
+     * The only thing this adapter puts on a real disk, and it is the autostart manifest.
+     *
+     * WHY THE MODE IS 0600. The manifest renders `plan.environment` verbatim and then survives a
+     * reboot, so the file is a durable, cleartext copy of whatever map a caller passed. Nothing
+     * validates or redacts that map today, which makes the mode the only thing deciding who may
+     * read it. It was 0644 (measured: umask 022 against `writeFileSync`'s default 0666), so every
+     * local account could. The login agent that consumes this file runs in this user's own domain,
+     * as this uid, so an owner-only read is the whole of the access the service manager needs, and
+     * there is no group or other-user reader to widen for.
+     *
+     * WHAT 0600 DOES NOT DO, so that nobody reads more into it than it keeps: anything already
+     * running as this user can read this file, so the mode is a boundary against OTHER LOCAL
+     * ACCOUNTS and not a secret store. It says nothing about backups or snapshots of the file, and
+     * nothing about the values once the launched process holds them in its environment. A secret
+     * belongs in the credential broker (blueprint §12.1), not here, and this mode does not change
+     * that.
+     *
+     * The containing directory is NOT narrowed, and this comment says so rather than letting a
+     * reader assume it: `mkdirSync` creates it with this process's default when it is missing
+     * (0755 under a 0022 umask, measured) and leaves it alone when it already exists. It is shared
+     * with every other login agent on the machine, and its mode decides who may LIST the unit ids
+     * in it, not who may read what is inside this file. That second question is the mode above.
+     */
     writeFile: (path, body) => {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, body, 'utf8');
+      // The mode passed to `open` applies only when this call CREATES the file: an existing
+      // manifest -- including a 0644 one an earlier version of this adapter wrote -- would keep the
+      // mode it already had. So narrow it on the descriptor, after the truncate and before any byte
+      // of the new body is in the file, rather than chmod-ing afterwards.
+      const fd = openSync(path, 'w', 0o600);
+      try {
+        fchmodSync(fd, 0o600);
+        writeFileSync(fd, body, 'utf8');
+      } finally {
+        closeSync(fd);
+      }
     },
     realpath: (path) => realpathSync.native(path),
     ownerUid: (path) => statSync(path).uid,

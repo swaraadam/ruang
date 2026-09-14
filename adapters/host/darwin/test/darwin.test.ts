@@ -3,10 +3,14 @@
  * procedure actually says, and how §6.4's probes read this specific machine. Unit tests, not
  * contract tests — the seam-wide assertions live in tests/contract and run against both adapters.
  */
-import { describe, expect, it } from 'vitest';
+import { chmodSync, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
 import type { AutostartPlan, DarwinEnv } from '../src/index.js';
 import {
   createDarwinHostAdapter,
+  defaultDarwinEnv,
   manifestPath,
   ownerProcedure,
   renderManifest,
@@ -279,5 +283,47 @@ describe('an autostart plan cannot write outside the login-agent directory', () 
         /owner-run only|run another program/,
       );
     }
+  });
+});
+
+/**
+ * On a real filesystem, because the thing under test is a mode bit and every other test in this
+ * file writes into a Map. The manifest carries `plan.environment` verbatim into a file that
+ * survives a reboot, so who can READ it is part of what this adapter does, not an ambient detail.
+ */
+describe('the mode of the manifest on disk', () => {
+  const home = realpathSync.native(mkdtempSync(join(tmpdir(), 'p0-07-manifest-')));
+  const real = defaultDarwinEnv({ home, user_id: 501, allow_roots: [home] });
+  const installable = (unit_id: string): AutostartPlan => ({
+    ...PLAN,
+    unit_id,
+    working_directory: home,
+    log_directory: `${home}/logs`,
+    environment: { NODE_ENV: 'production', GATEWAY_PORT: '7777' },
+  });
+  afterAll(() => void rmSync(home, { recursive: true, force: true }));
+
+  it('is readable by the owner and by nobody else', async () => {
+    const plan = installable('placeholder.mode');
+    const result = await createDarwinHostAdapter(real).autostart_contract().install(plan);
+    expect(result.wrote).toBe(true);
+    const mode = statSync(result.manifest_path).mode & 0o777;
+    expect((mode & 0o777).toString(8)).toBe('600');
+    // Stated twice on purpose: the octal above is what the mode IS, this is the property the
+    // security review asked for, and a later widening should fail on the sentence it breaks.
+    expect(mode & 0o077).toBe(0);
+    expect(real.readFile(result.manifest_path)).toContain('GATEWAY_PORT');
+  });
+
+  it('narrows a manifest that is already on disk with a wider mode', async () => {
+    const plan = installable('placeholder.rewrite');
+    const autostart = createDarwinHostAdapter(real).autostart_contract();
+    const first = await autostart.install(plan);
+    // What an earlier version of this adapter left behind. `writeFileSync`'s mode argument applies
+    // only when the call CREATES the file, so a rewrite over this is where the bit would survive.
+    chmodSync(first.manifest_path, 0o644);
+    const repaired = await autostart.repair({ ...plan, keep_alive: !plan.keep_alive });
+    expect(repaired.actions_taken.join(' ')).toMatch(/rewrote divergent/);
+    expect((statSync(first.manifest_path).mode & 0o777).toString(8)).toBe('600');
   });
 });
