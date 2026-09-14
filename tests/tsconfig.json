@@ -5,6 +5,8 @@
   "references": [
     { "path": "../adapters/domain/code" },
     { "path": "../packages/domain" },
-    { "path": "../packages/protocol" }
+    { "path": "../packages/persistence" },
+    { "path": "../packages/protocol" },
+    { "path": "../tsconfig.scripts.json" }
   ]
 }

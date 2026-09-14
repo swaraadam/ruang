@@ -1,0 +1,10 @@
+// `scripts/seed.ts` is compiled by the same `tsc -b` as everything else rather than run through a
+// type stripper: tests/module-resolution.test.ts makes "real node can import the emitted artefact"
+// the standard here, and a script that never produced an artefact would be exempt from it.
+// `config/` is included because nothing else compiles it and the seed reads `config/naming.ts`.
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": ".", "types": ["node"] },
+  "include": ["scripts/*.ts", "config/*.ts"],
+  "references": [{ "path": "./packages/persistence" }, { "path": "./packages/protocol" }]
+}
