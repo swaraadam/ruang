@@ -16,23 +16,61 @@
     "regenerated from the source of record by a documented command -- state the command.",
     "",
     "The 2026-09-13 run nearly lost 1400 authored lines to a sandbox believed empty, and was saved",
-    "only by inspect reporting dirty_files: 21. This list is what that check is worth."
+    "only by inspect reporting dirty_files: 21. This list is what that check is worth.",
+    "",
+    "PATHS MATCH AT ANY DEPTH. This is a pnpm workspace: dist/ and node_modules/ exist under",
+    "every package, so an entry here means that name wherever it appears, not only at the root."
   ],
   "reproducible": [
-    { "path": "node_modules", "regenerated_by": "pnpm install" },
-    { "path": "dist", "regenerated_by": "pnpm run typecheck && pnpm run build" },
-    { "path": ".turbo", "regenerated_by": "any turbo run; it is a cache" },
-    { "path": "coverage", "regenerated_by": "pnpm test -- --coverage" },
-    { "path": "state/dev", "regenerated_by": "pnpm seed" },
-    { "path": "logs", "regenerated_by": "nothing regenerates a log; it is diagnostic, not work" },
-    { "path": "*.sqlite", "regenerated_by": "pnpm seed" },
-    { "path": "*.sqlite-wal", "regenerated_by": "pnpm seed" },
-    { "path": "*.sqlite-shm", "regenerated_by": "pnpm seed" }
+    {
+      "path": "node_modules",
+      "regenerated_by": "pnpm install"
+    },
+    {
+      "path": "dist",
+      "regenerated_by": "pnpm run typecheck && pnpm run build"
+    },
+    {
+      "path": ".turbo",
+      "regenerated_by": "any turbo run; it is a cache"
+    },
+    {
+      "path": "coverage",
+      "regenerated_by": "pnpm test -- --coverage"
+    },
+    {
+      "path": "state/dev",
+      "regenerated_by": "pnpm seed"
+    },
+    {
+      "path": "logs",
+      "regenerated_by": "nothing regenerates a log; it is diagnostic, not work"
+    },
+    {
+      "path": "*.sqlite",
+      "regenerated_by": "pnpm seed"
+    },
+    {
+      "path": "*.sqlite-wal",
+      "regenerated_by": "pnpm seed"
+    },
+    {
+      "path": "*.sqlite-shm",
+      "regenerated_by": "pnpm seed"
+    },
+    {
+      "path": ".DS_Store",
+      "regenerated_by": "the Finder; it is macOS metadata, never work"
+    },
+    {
+      "path": "__pycache__",
+      "regenerated_by": "any python3 run; it is bytecode cache"
+    }
   ],
   "_not_listed_on_purpose": [
-    "state/artifacts -- retention classes live there; §7 makes SQLite the authoritative home for",
+    "state/artifacts -- retention classes live there; \u00a77 makes SQLite the authoritative home for",
     "control-plane history, and an artifact under a retention class is evidence, not scratch.",
-    "state/debug -- CLAUDE.md §8 permits rm -rf there, but permitting deletion is not the same as",
+    "state/debug -- CLAUDE.md \u00a78 permits rm -rf there, but permitting deletion is not the same as",
     "claiming regeneration. A debug capture of a crash exists only once."
   ]
 }

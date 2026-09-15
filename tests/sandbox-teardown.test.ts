@@ -52,12 +52,23 @@ const fixture = () => {
   writeFileSync(join(sb, '.gitignore'), ignores);
   git(sb, 'add', '.gitignore');
   git(sb, 'commit', '-qm', 'init');
-  for (const d of ['notes', 'node_modules', 'dist', 'state/dev'])
+  for (const d of [
+    'notes',
+    'node_modules',
+    'dist',
+    'state/dev',
+    'apps/web/dist',
+    'packages/x/node_modules',
+  ])
     mkdirSync(join(sb, d), { recursive: true });
   writeFileSync(join(sb, 'notes/plan.md'), 'the only copy of this work\n');
   writeFileSync(join(sb, 'node_modules/x.js'), 'j\n');
   writeFileSync(join(sb, 'dist/o.js'), 'b\n');
   writeFileSync(join(sb, 'state/dev/db.sqlite'), 's\n');
+  // A pnpm workspace nests dist/ and node_modules/ under every package. A root-anchored match left
+  // these looking unreproducible and made every real sandbox read as unsafe.
+  writeFileSync(join(sb, 'apps/web/dist/b.js'), 'b\n');
+  writeFileSync(join(sb, 'packages/x/node_modules/y.js'), 'y\n');
   return root;
 };
 
@@ -75,7 +86,13 @@ describe('sandbox teardown (#103)', () => {
     const out = run(fixture(), 'inspect').stdout;
     // The whole point: flagging these too would make inspect noise nobody reads.
     expect(out).toContain('unreproducible_ignored: 1');
-    for (const d of ['node_modules/', 'dist/', 'state/dev/']) {
+    for (const d of [
+      'node_modules/',
+      'dist/',
+      'state/dev/',
+      'apps/web/dist/',
+      'packages/x/node_modules/',
+    ]) {
       expect(out.split('ignored, and not declared reproducible:')[1] ?? '').not.toContain(d);
     }
   });

@@ -40,11 +40,21 @@ unreproducible() {
 import json, sys, fnmatch
 spec = [e["path"] for e in json.load(open(sys.argv[1]))["reproducible"]]
 def reproducible(p):
+    # A declared path matches AT ANY DEPTH, not only at the repository root. This is a pnpm
+    # workspace: dist/ and node_modules/ exist under every package, so a root-anchored match left
+    # apps/gateway/dist and packages/attention/dist looking unreproducible and made all six live
+    # sandboxes read as unsafe -- the "inspect nobody reads" failure this issue is about, produced
+    # by the fix for it. Caught by running the check against the real sandboxes, not by the tests.
     p = p.rstrip("/")
     for s in spec:
-        # A declared path matches itself, anything beneath it, and as a glob (e.g. *.sqlite).
-        if p == s or p.startswith(s + "/") or fnmatch.fnmatch(p, s) or fnmatch.fnmatch(p, s + "/*"):
+        if s.startswith("*"):                       # a glob: match the basename at any depth
+            if fnmatch.fnmatch(p.rsplit("/", 1)[-1], s):
+                return True
+            continue
+        if p == s or p.startswith(s + "/"):         # at the root
             return True
+        if ("/" + p).endswith("/" + s) or ("/" + p + "/").find("/" + s + "/") >= 0:
+            return True                             # nested: apps/gateway/dist, x/node_modules/y
     return False
 for line in sys.stdin:
     p = line.strip()
