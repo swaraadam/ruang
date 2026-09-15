@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { DomainAdapter, Sandbox } from '@internal/domain';
+import type { Sandbox } from '@internal/domain';
 import type { ChangeSet } from '@internal/protocol';
 import { describe, expect, it } from 'vitest';
 import { codeHarness } from '../../../../tests/contract/code-harness.js';
@@ -67,13 +67,9 @@ describe('nothing the adapter produces at runtime leaks substrate (acceptance 4)
       const sandbox = await s.adapter.open_sandbox(s.project, basis);
       s.leaveUnsavedWork(sandbox);
       const set = await s.adapter.compute_change_set(sandbox);
-      const wide = { change_budget: 9999, max_risk: 'high' } as const;
-      const plan = await s.adapter.apply_plan(set, wide);
-      const done = plan.operations.map((op) => ({ ...op, succeeded: true, detail: 'applied' }));
-      const applied = await s.adapter.confirm_applied(plan.plan_id, done);
       const specs = await s.adapter.declared_checks(s.project);
       const a = s.adapter;
-      // The last four are refusal paths: an error message is the easiest place for a leak to escape.
+      // The last three are refusal paths: an error message is the easiest place for a leak to escape.
       for (const [label, fn] of [
         ['basis', async () => basis],
         ['staleness', () => a.is_basis_stale(basis)],
@@ -83,15 +79,9 @@ describe('nothing the adapter produces at runtime leaks substrate (acceptance 4)
         ['rendered', () => a.render_change_set(set, 'mobile')],
         ['specs', async () => specs],
         ['results', () => a.run_checks(sandbox, specs)],
-        ['plan', async () => plan],
-        ['applied', async () => applied],
-        ['reversal', () => a.revert_or_compensate(applied)],
-        ['reconcile', () => a.reconcile({ nothing_observable: 'x' })],
-        ['closed', () => a.close_sandbox(sandbox, { force: false, retain_artifacts: true })],
         ['unknown project', () => a.snapshot_basis('another-project', [])],
         ['unknown basis', () => a.open_sandbox(s.project, s.unresolvableBasis())],
-        ['over budget', () => a.apply_plan(set, { ...wide, change_budget: 0 })],
-        ['over risk', () => a.apply_plan(set, { ...wide, max_risk: 'low' })],
+        ['unsafe identifier', () => a.inspect_sandbox(s.forgedSandbox().sandbox)],
       ] as const)
         await capture(label, fn);
     } finally {
@@ -102,7 +92,7 @@ describe('nothing the adapter produces at runtime leaks substrate (acceptance 4)
     const emitted = JSON.stringify(seen).replaceAll(/\/[^"]*contract-code-[^"]*?(?="|\\)/g, '');
     const words = [...emitted.matchAll(new RegExp(SUBSTRATE.source, 'gi'))].map((m) => m[0]);
     expect(words).toEqual([]);
-    expect(seen.length).toBe(17);
+    expect(seen.length).toBe(11);
   });
 });
 
@@ -115,8 +105,10 @@ describe('the process runner cannot grow a mutating verb', () => {
   );
 
   // The sandbox lifecycle is the one permitted subcommand with verbs of its own, so permitting it
-  // by name alone permitted all of them -- including three the package never uses.
-  it.each(['lock', 'move', 'repair'])(
+  // by name alone permits all of them. `remove` and `prune` are on this list rather than the
+  // allow-list because teardown left for #108 and took the only caller with it: a package with no
+  // method that destroys a sandbox should not be one command away from being able to.
+  it.each(['lock', 'move', 'repair', 'remove', 'prune'])(
     'refuses the %s verb of a permitted subcommand',
     async (v) => {
       await expect(runGit(process.cwd(), ['worktree', v])).rejects.toThrow(/allow-list/);
@@ -175,7 +167,7 @@ const git = (cwd: string, args: readonly string[]): void => {
 
 type Fixture = {
   set: ChangeSet;
-  adapter: DomainAdapter;
+  adapter: ReturnType<typeof createCodeAdapter>;
   sandbox: Sandbox;
   /** Where the sandbox is, and where the source of record is: hostile input arrives at both. */
   at: string;
@@ -234,13 +226,6 @@ const range = (resource_id: string, start_line: number, end_line: number): unkno
   start_line,
   end_line,
 });
-/** The seam's own answer, not its wording: every refusal carries a code the core can act on. */
-const refusalOf = async (planned: Promise<unknown>): Promise<string> =>
-  planned.then(
-    () => 'no refusal',
-    (e: unknown) => (e as { code?: string }).code ?? 'not a refusal',
-  );
-
 describe('a resource whose name the substrate cannot print literally (invariant 1, §16.6)', () => {
   /**
    * The cross-product, not the shapes someone happened to list. Two properties interact here and
@@ -303,16 +288,6 @@ describe('a resource whose name the substrate cannot print literally (invariant 
         expect(existsSync(join(f.at, `${n}-t.md`))).toBe(true);
         expect(existsSync(join(f.at, `${n}-u.md`))).toBe(true);
       }
-
-      // The consequence the count actually has. Understating it is not a fidelity loss, it is the
-      // budget gate answering about a change set that does not exist.
-      const risk = { max_risk: 'high' } as const;
-      await expect(
-        f.adapter.apply_plan(f.set, { ...risk, change_budget: truth - 1 }),
-      ).rejects.toThrow();
-      await expect(
-        f.adapter.apply_plan(f.set, { ...risk, change_budget: truth }),
-      ).resolves.toBeDefined();
     } finally {
       f.tearDown();
     }
@@ -424,9 +399,11 @@ describe('the source of record’s own configuration cannot turn a read into an 
   });
 
   /**
-   * The same file reaching the same methods from the other direction, and the destructive one: one
+   * The same file reaching the same methods from the other direction, and the consequential one: one
    * key made a sandbox holding the only copy of a resource report "no unsaved changes", and the
-   * close that followed was refused nothing -- `force` was never asked for (§10.4, invariant 3).
+   * teardown that followed was refused nothing -- `force` was never asked for (§10.4, invariant 3).
+   * Teardown is #108. `safe_to_close` is still what it will read, so the report is what is pinned
+   * here: a query that fails closed is what makes the teardown behind it safe to write at all.
    */
   it('reports the unsaved work that is there, whatever the configuration says to list', async () => {
     const f = await fixture(
@@ -439,11 +416,7 @@ describe('the source of record’s own configuration cannot turn a read into an 
     try {
       const inspection = await f.adapter.inspect_sandbox(f.sandbox);
       expect(inspection).toMatchObject({ dirty: true, safe_to_close: false });
-      const closed = await f.adapter.close_sandbox(f.sandbox, {
-        force: false,
-        retain_artifacts: true,
-      });
-      expect(closed.closed).toBe(false);
+      expect(inspection.unsaved_summary).toContain('1 resource(s) with unsaved changes');
       expect(existsSync(join(f.at, 'the-only-copy.md'))).toBe(true);
     } finally {
       f.tearDown();
@@ -502,13 +475,16 @@ describe('a reference is described, never read through (§5.2.1, invariant 1)', 
 });
 
 /**
- * §16.6 with invariant 4. A budget decision needs a size that covers the whole change set, and
- * `lines` has nothing to say about a resource that is not text. Scoring one zero made "nothing
- * changed" and "fourteen megabytes changed, in a shape I cannot count" the same number: six binary
- * resources planned cleanly under a budget of **zero**, with nothing forged, nothing inconsistent
- * and nothing for the gate to catch. A size that cannot describe the set is refused, not rounded.
+ * §16.6 with invariant 1. `lines` has nothing to say about a resource that is not text, and scoring
+ * one zero made "nothing changed" and "fourteen megabytes changed, in a shape I cannot count" the
+ * same number: six binary resources planned cleanly under a budget of **zero**, with nothing forged
+ * and nothing for the gate to catch.
+ *
+ * That gate is issue #108. What this half owes it is a change set that does not hand it a bare zero
+ * to be fooled by — so the assertions here are on what `compute_change_set` says, which is the only
+ * thing a later gate has to go on.
  */
-describe('a change set the declared unit cannot size is refused, never scored zero', () => {
+describe('a change set the declared unit cannot size says so, never just scores zero', () => {
   const OPAQUE = Uint8Array.from([0x00, 0x01, 0x02, 0xff, 0x00, 0xfe]);
   const REVISED = Uint8Array.from([0x00, 0x01, 0x02, 0xff, 0x00, 0xfe, 0xab, 0xcd]);
   const seedAssets = (at: string): void => {
@@ -519,51 +495,25 @@ describe('a change set the declared unit cannot size is refused, never scored ze
     writeFileSync(join(at, 'first.opaque'), REVISED);
     writeFileSync(join(at, 'second.opaque'), REVISED);
   };
-  const risk = { max_risk: 'high' } as const;
 
-  it('refuses a change set of resources its unit cannot express, at any budget', async () => {
+  it('names the resources its unit cannot express, beside the size that excludes them', async () => {
     const f = await fixture(seedAssets, reviseAssets);
     try {
       expect(f.set.changes.every((c) => c.kind === 'asset_delta')).toBe(true);
-      expect(await refusalOf(f.adapter.apply_plan(f.set, { ...risk, change_budget: 0 }))).toBe(
-        'change_set_unmeasurable',
-      );
-      // Not a size question, so no budget is wide enough to answer it.
-      expect(await refusalOf(f.adapter.apply_plan(f.set, { ...risk, change_budget: 10_000 }))).toBe(
-        'change_set_unmeasurable',
-      );
+      // Zero *lines* is true. A change set that stopped there would be the lie, because the only
+      // difference between it and an untouched sandbox is a sentence nobody wrote.
+      expect(f.set.change_size).toBe(0);
+      expect(f.set.summary).toContain('2 not countable in lines');
     } finally {
       f.tearDown();
     }
   });
 
-  it('measures the same change set in a unit that can express it, and the gate decides on that', async () => {
+  it('measures the same change set in a unit that can express it', async () => {
     const f = await fixture(seedAssets, reviseAssets, { change_unit: 'files' });
     try {
       expect(f.set.change_size).toBe(2);
-      expect(await refusalOf(f.adapter.apply_plan(f.set, { ...risk, change_budget: 1 }))).toBe(
-        'change_budget_exceeded',
-      );
-      await expect(
-        f.adapter.apply_plan(f.set, { ...risk, change_budget: 2 }),
-      ).resolves.toBeDefined();
-    } finally {
-      f.tearDown();
-    }
-  });
-
-  it('counts in no unit it does not count in', async () => {
-    const f = await fixture(
-      (at) => writeFileSync(join(at, 'seed.md'), 'one\ntwo\n'),
-      (at) => writeFileSync(join(at, 'seed.md'), 'one\nEDITED\n'),
-    );
-    try {
-      // The protocol has four change units and this adapter counts in two. A change set arriving
-      // in one of the other two was measured as lines, which is a size about a different question.
-      const foreign = { ...f.set, change_unit: 'megabytes' as const, change_size: 2 };
-      expect(await refusalOf(f.adapter.apply_plan(foreign, { ...risk, change_budget: 2 }))).toBe(
-        'change_set_unmeasurable',
-      );
+      expect(f.set.summary).not.toContain('not countable');
     } finally {
       f.tearDown();
     }

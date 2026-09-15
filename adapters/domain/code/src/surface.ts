@@ -36,23 +36,17 @@ export type CodeAdapterOptions = {
   /** §14.1: the Project declares its change unit. The adapter counts in it, it does not pick it. */
   readonly change_unit?: 'lines' | 'files' | undefined;
   readonly checks?: readonly CheckDeclaration[] | undefined;
-  /** A downstream target an apply may publish to. Absent means no publish step is ever planned. */
-  readonly publish_target?: string | null | undefined;
   readonly now?: (() => string) | undefined;
   readonly new_id?: (() => string) | undefined;
 };
 
+/**
+ * Open rather than exhaustive-by-intent: this is the set the methods implemented here can produce,
+ * and the codes an apply gate refuses with go with that gate to issue #108. A consumer switching on
+ * this union will be told by the compiler when they come back.
+ */
 export type RefusalCode =
-  | 'basis_unknown'
-  | 'unknown_project'
-  | 'unsafe_identifier'
-  | 'sandbox_not_materialised'
-  | 'change_budget_exceeded'
-  /** The change set's own summary of itself does not match the changes it carries. */
-  | 'change_set_inconsistent'
-  /** The change set holds resources the declared change unit cannot express a size for. */
-  | 'change_set_unmeasurable'
-  | 'risk_not_permitted';
+  'basis_unknown' | 'unknown_project' | 'unsafe_identifier' | 'sandbox_not_materialised';
 
 /**
  * A refusal, not a crash. Invariants 4 and 5: the adapter would rather stop than improvise, and the

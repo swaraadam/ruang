@@ -1,19 +1,41 @@
 /**
- * The thirteen methods of §5.2, assembled. Each delegates; the mapping from core concept to
- * substrate lives in the module it belongs to, and the table is in this package's README. One
- * instance binds one Project, and a method asked about a different Project refuses rather than
- * answering about the one it holds — a wrong answer here is attributed to the wrong Project for
- * the rest of its life.
+ * The part of §5.2 this adapter implements today, assembled. Each method delegates; the mapping from
+ * core concept to substrate lives in the module it belongs to, and the table is in this package's
+ * README. One instance binds one Project, and a method asked about a different Project refuses
+ * rather than answering about the one it holds — a wrong answer here is attributed to the wrong
+ * Project for the rest of its life.
  */
 import type { DomainAdapter, ProjectId } from '@internal/domain';
-import { applyPlan, confirmApplied, reconcile, revertOrCompensate } from './apply.js';
 import { basisStaleness, snapshotBasis } from './basis.js';
 import { computeChangeSet, renderChangeSet } from './changes.js';
 import { declaredChecks, runChecks } from './checks.js';
-import { closeSandbox, inspectSandbox, openSandbox } from './sandbox.js';
+import { inspectSandbox, openSandbox } from './sandbox.js';
 import { AdapterRefusal, type CodeAdapterOptions } from './surface.js';
 
-export const createCodeAdapter = (options: CodeAdapterOptions): DomainAdapter => {
+/**
+ * The methods implemented here, named as a subset of the contract rather than as a contract of their
+ * own. **`packages/domain/src/spi.ts` is unchanged and still declares all thirteen**: what is
+ * narrower is what has been built, not what is required of a domain adapter, and every signature
+ * below is still the SPI's own. Writing it as a `Pick` is what keeps those two facts apart — a
+ * hand-written thirteen-minus-five interface would read as a revised contract.
+ *
+ * The five that are absent — `close_sandbox`, `apply_plan`, `confirm_applied`,
+ * `revert_or_compensate`, `reconcile` — are the surface the owner cut on 2026-09-15 (issue #10) and
+ * belong to #108. The remainder answers questions; it decides nothing irreversible.
+ */
+export type ImplementedMethods =
+  | 'snapshot_basis'
+  | 'is_basis_stale'
+  | 'open_sandbox'
+  | 'inspect_sandbox'
+  | 'compute_change_set'
+  | 'render_change_set'
+  | 'declared_checks'
+  | 'run_checks';
+
+export const createCodeAdapter = (
+  options: CodeAdapterOptions,
+): Pick<DomainAdapter, ImplementedMethods> => {
   const sameProject = (project: ProjectId): void => {
     if (project !== options.project_id)
       throw new AdapterRefusal(
@@ -33,16 +55,12 @@ export const createCodeAdapter = (options: CodeAdapterOptions): DomainAdapter =>
       sameProject(project);
       return openSandbox(options, basis);
     },
-    // A sandbox carries the Project it belongs to, and these four were taking that on trust. An
-    // instance bound to one Project answering about another's sandbox reaches into this Project's
-    // locations under another Project's name -- the wrong answer, attributed wrongly, for good.
+    // A sandbox carries the Project it belongs to, and these were taking that on trust. An instance
+    // bound to one Project answering about another's sandbox reaches into this Project's locations
+    // under another Project's name -- the wrong answer, attributed wrongly, for good.
     inspect_sandbox: async (sandbox) => {
       sameProject(sandbox.project_id);
       return inspectSandbox(options, sandbox);
-    },
-    close_sandbox: async (sandbox, policy) => {
-      sameProject(sandbox.project_id);
-      return closeSandbox(options, sandbox, policy);
     },
     compute_change_set: async (sandbox) => {
       sameProject(sandbox.project_id);
@@ -57,9 +75,5 @@ export const createCodeAdapter = (options: CodeAdapterOptions): DomainAdapter =>
       sameProject(sandbox.project_id);
       return runChecks(options, sandbox, specs);
     },
-    apply_plan: (change_set, policy) => applyPlan(options, change_set, policy),
-    confirm_applied: async (plan_id, broker_results) => confirmApplied(plan_id, broker_results),
-    revert_or_compensate: async (result) => revertOrCompensate(options, result),
-    reconcile: (known_state) => reconcile(options, known_state),
   };
 };

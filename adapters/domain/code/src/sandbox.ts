@@ -1,23 +1,28 @@
 /**
- * Sandbox lifecycle: a git worktree under the configured sandbox root (§5.3, §5.2.3, §10.4). The
+ * Sandbox lifecycle, opening and inspection only: a git worktree under the configured sandbox root
+ * (§5.3, §5.2.3). Teardown is issue #108, and until it lands nothing in this package deletes a
+ * sandbox — `locate` below is still written as though something did, because something will. The
  * location is *derived* from the ids, never remembered: the spine restarts, and a sandbox it can no
  * longer find would be one whose dirty work it silently assumes away — invariant 7 says one
  * authoritative home per fact, and the filesystem is that home for this one.
  */
-// prettier-ignore
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-// prettier-ignore
-import type { Basis, ClosePolicy, SafetyRecord, Sandbox, SandboxInspection } from '@internal/domain';
+import { existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import type { Basis, Sandbox, SandboxInspection } from '@internal/domain';
 import { basisStaleness } from './basis.js';
 import { isPathSafeId, under } from './paths.js';
 import { runGit } from './process.js';
 import { AdapterRefusal, type CodeAdapterOptions } from './surface.js';
 
 /**
- * Every path in this module is derived from an id the caller chose, and one of them is handed to a
- * recursive delete. An id this adapter could not have issued therefore locates *nothing*: refused
- * at the derivation, once, so no call site can forget it.
+ * Every path in this module is derived from an id the caller chose. An id this adapter could not
+ * have issued therefore locates *nothing*: refused at the derivation, once, so no call site can
+ * forget it.
+ *
+ * Guarded here rather than at the one call site that needs it, because which call site needs it
+ * changes. Nothing in this package deletes anything today; teardown (#108) is destructive at the end
+ * of exactly this derivation, and the rule it depends on should already be in place and already
+ * tested when it arrives rather than being added alongside it.
  */
 const locate = (root: string, sandbox_id: string): string => {
   const full = isPathSafeId(sandbox_id) ? under(root, sandbox_id) : null;
@@ -99,159 +104,4 @@ export const inspectSandbox = async (
   const lines = r.stdout.split('\n').filter((l) => l.trim().length > 0);
   const dirty = lines.length > 0;
   return state(dirty, dirty ? summarise(lines) : 'no unsaved changes');
-};
-
-/**
- * §10.4. A dirty sandbox is never torn down silently: without `force` the close is refused and the
- * refusal is the record; with `force` the unsaved work is written out as an artifact *first*, so a
- * SafetyRecord that says "closed" can also say where the work went.
- */
-export const closeSandbox = async (
-  o: CodeAdapterOptions,
-  sandbox: Sandbox,
-  policy: ClosePolicy,
-): Promise<SafetyRecord> => {
-  const inspection = await inspectSandbox(o, sandbox);
-  if (!inspection.safe_to_close && !policy.force)
-    return {
-      sandbox_id: sandbox.sandbox_id,
-      closed: false,
-      retained_artifacts: inspection.retained_artifacts,
-      refused_reason: `close refused: ${inspection.unsaved_summary}`,
-    };
-
-  // `retain_artifacts: false` discards check output, and is applied *before* the rescue below so
-  // that a policy about evidence is never a licence to destroy the work itself.
-  if (!policy.retain_artifacts)
-    rmSync(artifactDir(o, sandbox.sandbox_id), { recursive: true, force: true });
-  const path = sandboxPath(o, sandbox.sandbox_id);
-  if (inspection.dirty && existsSync(path)) await rescueUnsavedWork(o, sandbox.sandbox_id, path);
-  if (existsSync(path)) {
-    const r = await runGit(o.source_of_record, ['worktree', 'remove', '--force', path]);
-    if (r.code !== 0)
-      return {
-        sandbox_id: sandbox.sandbox_id,
-        closed: false,
-        retained_artifacts: retainedArtifacts(o, sandbox.sandbox_id),
-        refused_reason: 'the sandbox could not be released',
-      };
-    await runGit(o.source_of_record, ['worktree', 'prune']);
-  }
-  return {
-    sandbox_id: sandbox.sandbox_id,
-    closed: true,
-    retained_artifacts: retainedArtifacts(o, sandbox.sandbox_id),
-    refused_reason: null,
-  };
-};
-
-const rescueUnsavedWork = async (
-  o: CodeAdapterOptions,
-  sandbox_id: string,
-  path: string,
-): Promise<void> => {
-  // Both of these are written verbatim into the record a person reads, never parsed for a name.
-  // The listing still gets `-z`, re-joined for that reader: without it the section above the
-  // retention showed escaped spellings while the retention below it used the real ones, so the one
-  // record that has to be trusted disagreed with itself about what was there.
-  const patch = await runGit(path, ['diff', '--no-color', 'HEAD']);
-  const others = await runGit(path, ['ls-files', '--others', '--exclude-standard', '-z']);
-  const dir = artifactDir(o, sandbox_id);
-  mkdirSync(dir, { recursive: true });
-
-  // A patch is TEXT, and loses two whole classes of content on its own: a resource never added to
-  // the index appears only as a *name* in that listing, and a changed binary renders as "Binary
-  // files ... differ". The caller is about to force a teardown, so those bytes have no other home
-  // -- and `retained_artifacts` would still report the work as retained.
-  //
-  // That is invariant 1 in the one record someone reads before deciding a sandbox is safe to
-  // destroy, so bytes that are the sandbox's own are copied rather than described. Named for what
-  // it holds, not for how the substrate classified it: a reader wants the resource back, not a
-  // lesson about index state.
-  const unretained: string[] = [];
-  for (const rel of await unrecordedByPatch(path)) {
-    const from = under(path, rel);
-    const to = under(dir, 'unsaved-resources', rel);
-    if (from === null || to === null) {
-      unretained.push(`${rel}: names a location outside this sandbox`);
-      continue;
-    }
-    const entry = lstatSync(from, { throwIfNoEntry: false });
-    // A deletion is already fully described by the patch, and has no bytes left to copy.
-    if (entry === undefined) continue;
-    // A reference is not content, and it is never followed. Its bytes belong to whatever it names
-    // -- anywhere on the host, an owner's keys included -- and copying those into a retained
-    // artifact would rescue something that was never this sandbox's work. What the reference says
-    // *is* the resource, so that is what the record keeps.
-    if (entry.isSymbolicLink()) {
-      unretained.push(
-        `${rel}: a reference to ${readlinkSync(from)}, recorded rather than followed`,
-      );
-      continue;
-    }
-    if (!entry.isFile()) {
-      unretained.push(`${rel}: not a resource whose bytes can be retained`);
-      continue;
-    }
-    // A second *name* for those same bytes is the same borrowing, and it does not look like one:
-    // the entry is an ordinary resource, so the check above waves it through and one extra name for
-    // an owner's key inside the sandbox put the key into retained evidence. This adapter cannot see
-    // where the other name is without walking the host, so it does not guess -- invariant 3, the
-    // ambiguity is recorded and the bytes stay where they are. The cost is a resource genuinely the
-    // sandbox's own, named twice inside it, described instead of copied; that is the safe direction.
-    if (entry.nlink > 1) {
-      unretained.push(`${rel}: bytes also reachable under a name this adapter cannot account for`);
-      continue;
-    }
-    try {
-      mkdirSync(dirname(to), { recursive: true });
-      copyFileSync(from, to);
-    } catch {
-      unretained.push(`${rel}: could not be retained`);
-    }
-  }
-
-  // What was *not* retained belongs in the record too. A rescue that drops a resource in silence
-  // reads exactly like one that had nothing to drop, and this is the record someone reads before
-  // accepting the loss -- invariant 1 again, from the other side.
-  writeFileSync(
-    join(dir, 'unsaved-work.txt'),
-    [
-      patch.stdout,
-      '--- resources present only in the sandbox ---',
-      others.stdout
-        .split('\0')
-        .filter((p) => p.length > 0)
-        .join('\n'),
-      '--- resources whose bytes were not retained ---',
-      unretained.length > 0 ? `${unretained.join('\n')}\n` : '(none)\n',
-    ].join('\n'),
-    'utf8',
-  );
-};
-
-/**
- * The resources whose *content* the patch does not carry: everything untracked, plus every changed
- * resource the diff declined to render. `--numstat` marks the second kind with `-` in both count
- * columns, which is the only place that distinction is reported without parsing the diff body.
- */
-const unrecordedByPatch = async (path: string): Promise<readonly string[]> => {
-  // NUL-delimited: a path may contain a space, and `ls-files` would otherwise quote and escape it,
-  // producing a name that does not exist on disk.
-  const untracked = await runGit(path, ['ls-files', '--others', '--exclude-standard', '-z']);
-  // Same `-z`, same reason, and it was missing here: git C-quotes a name containing a control
-  // character, a quote or a backslash whatever `core.quotePath` says, so without it the name comes
-  // back in a spelling that does not exist on disk and the copy above skips it -- a teardown that
-  // reports the work as retained and keeps none of it. `--no-renames` keeps every record one field.
-  const unrendered = await runGit(path, ['diff', '--numstat', '--no-renames', '-z', 'HEAD']);
-  return [
-    ...new Set([
-      ...untracked.stdout.split('\0').filter((p) => p.length > 0),
-      ...unrendered.stdout
-        .split('\0')
-        .filter((l) => l.startsWith('-\t-\t'))
-        .map((l) => l.slice(4))
-        .filter((p) => p.length > 0),
-    ]),
-  ];
 };

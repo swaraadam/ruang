@@ -202,15 +202,17 @@ const subjectOf = (c: RenderableChange): string =>
  * A change set's size in its declared unit, **and** the resources that unit cannot describe.
  *
  * Keeping the two apart is the point. `lines` has nothing to say about a resource that is not text,
- * and scoring one zero made "nothing changed" and "fourteen megabytes changed, in a shape I cannot
- * count" the same number: a budget gate could not tell them apart, and neither could a reader
- * (invariant 1). A unit this adapter does not count in at all -- the protocol has four, this
- * adapter offers two -- measures nothing rather than being quietly treated as lines.
+ * and scoring one zero makes "nothing changed" and "fourteen megabytes changed, in a shape I cannot
+ * count" the same number, which no reader can tell apart (invariant 1). A unit this adapter does not
+ * count in at all -- the protocol has four, this adapter offers two -- measures nothing rather than
+ * being quietly treated as lines.
  *
- * `unmeasured` is the part a single number must not be asked to carry. Whoever decides on the size
- * has to refuse rather than round the rest down to zero (invariant 4, fail closed).
+ * Private, and the size it returns is `compute_change_set` describing its own result. **Deciding**
+ * anything on that number — a change budget, in the declared change unit — is issue #108, and it
+ * needs more than this: a single number must not be asked to carry `unmeasured`, so whoever gates on
+ * one has to refuse rather than round the rest down to zero (invariant 4). Nothing here gates.
  */
-export const measureChangeSet = (
+const sizeInUnit = (
   changes: readonly RenderableChange[],
   change_unit: ChangeSet['change_unit'],
 ): { readonly size: number; readonly unmeasured: readonly string[] } => {
@@ -273,9 +275,7 @@ export const computeChangeSet = async (
   const added = changes.reduce((n, c) => n + (c.kind === 'text_patch' ? c.added : 0), 0);
   const removed = changes.reduce((n, c) => n + (c.kind === 'text_patch' ? c.removed : 0), 0);
   const change_unit = o.change_unit ?? 'lines';
-  // The same measurement the apply gate makes, so an honest change set can never be reported as
-  // disagreeing with itself by the gate that measures it.
-  const { size, unmeasured } = measureChangeSet(changes, change_unit);
+  const { size, unmeasured } = sizeInUnit(changes, change_unit);
   const rest =
     unmeasured.length > 0 ? `, ${unmeasured.length} not countable in ${change_unit}` : '';
   const body = {

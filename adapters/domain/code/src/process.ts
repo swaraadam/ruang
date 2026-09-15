@@ -1,10 +1,10 @@
 /**
  * The only place this package starts a process. `runGit` reaches the source of record and is
  * restricted to an allow-list of subcommands *and*, where a subcommand has verbs of its own, of
- * verb pairs — so the adapter cannot grow a push, a merge or a history rewrite by accident. Apply
- * is planned here and executed by the spine's broker (§5.2.2), never from inside. `runProcess`
- * runs a declared check's argv and has no such list, because a check is arbitrary by definition;
- * it is still argv, never a shell string.
+ * verb pairs — so the adapter cannot grow a push, a merge or a history rewrite by accident. Every
+ * entry on it today answers a question or materialises a sandbox; nothing on it destroys anything.
+ * `runProcess` runs a declared check's argv and has no such list, because a check is arbitrary by
+ * definition; it is still argv, never a shell string.
  *
  * An allow-list of subcommands only constrains what is *asked*. What is *answered* also depends on
  * the environment the child is given, which is why `gitEnv` below constructs one.
@@ -19,8 +19,8 @@ export type ProcessResult = {
 };
 
 /**
- * Read-only queries plus the sandbox lifecycle. `push`, `merge`, `rebase`, `reset`, `branch` and
- * `tag` are absent on purpose and adding one is a reviewable act.
+ * Read-only queries plus opening a sandbox. `push`, `merge`, `rebase`, `reset`, `branch` and `tag`
+ * are absent on purpose and adding one is a reviewable act.
  */
 const ALLOWED_SUBCOMMANDS: ReadonlySet<string> = new Set([
   'rev-parse',
@@ -33,11 +33,15 @@ const ALLOWED_SUBCOMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The one entry on the list above that carries verbs of its own, and only three are ever used:
- * naming the subcommand alone would admit `lock`, `move` and `repair` as well.
+ * The one entry on the list above that carries verbs of its own, and only one is ever used: naming
+ * the subcommand alone would admit `lock`, `move`, `repair`, `remove` and `prune` as well.
+ *
+ * `remove` and `prune` were here for teardown and left with it (#108). Narrowing rather than leaving
+ * them is the point of a list scoped to what is called: the two verbs that destroy a sandbox are not
+ * reachable from a package that has no method that should want to.
  */
 const ALLOWED_VERBS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ['worktree', new Set(['add', 'remove', 'prune'])],
+  ['worktree', new Set(['add'])],
 ]);
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -80,8 +84,9 @@ const ALWAYS = [
  *
  * `status` is the same file reaching the same methods from the other direction, and it is the
  * destructive one: `status.showUntrackedFiles=no` made `inspect_sandbox` report a sandbox holding
- * the only copy of a resource as having no unsaved changes, and `close_sandbox` -- *without*
- * `force`, on the strength of that report -- destroyed it (§10.4, invariant 3). What a listing
+ * the only copy of a resource as having no unsaved changes, and a teardown reading `safe_to_close`
+ * off that report destroyed it (§10.4, invariant 3). Teardown is #108; the report it will read is
+ * this one, so the pin stays whether or not anything in this package acts on it. What a listing
  * mentions is this package's question. What counts as work at all is still the source of record's,
  * so its ignore rules are honoured exactly as they stand.
  */

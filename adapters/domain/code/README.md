@@ -1,8 +1,14 @@
 # adapters/domain/code
 
 Owned by Seam A for source code: the one place where git, worktree, commit and diff vocabulary is
-accurate. Implements the full `DomainAdapter` contract (`packages/domain`, blueprint §5.2) over a
+accurate. Implements part of the `DomainAdapter` contract (`packages/domain`, blueprint §5.2) over a
 git source of record by shelling out to `git`; nothing here is a dependency.
+
+**Eight of the thirteen methods, and they are the ones that answer questions.** `close_sandbox`,
+`apply_plan`, `confirm_applied`, `revert_or_compensate` and `reconcile` are issue #108. The contract
+itself is untouched — `spi.ts` still declares all thirteen, and `createCodeAdapter` returns a `Pick`
+of it, so the gap is visible in the type rather than negotiated away in the interface. Nothing in
+this package writes to the source of record, and nothing in it deletes a sandbox.
 
 ## The mapping (blueprint §5.3)
 
@@ -14,8 +20,6 @@ git source of record by shelling out to `git`; nothing here is a dependency.
 | `Sandbox`                            | a detached worktree at `<sandbox_root>/<project_id>/<sandbox_id>`             |
 | `ChangeSet` / `ChangeAnchor`         | file changes + text patches; `text_range` from patch range headers            |
 | `change_unit` / `change_size`        | lines or files, whichever the Project declares                                |
-| `Apply`                              | declarative integrate (+ optional publish) operations for the spine's broker  |
-| Reversal                             | a forward reversing operation; a publish is `compensable`, not revertible     |
 | `Checks`                             | declared argv per project, run in the sandbox, output retained as an artifact |
 
 ## Rules this package keeps
@@ -25,11 +29,12 @@ git source of record by shelling out to `git`; nothing here is a dependency.
   because it is true there. `test/seam.test.ts` scans the surface and every runtime value.
 - **Only consulted resources are fingerprinted** (§13.2). A basis never hashes a directory, and a
   moved ref with no consulted input touched is not stale.
-- **`unknown` fails closed.** An unresolvable basis refuses to open a sandbox or plan an apply.
+- **`unknown` fails closed.** An unresolvable basis refuses to open a sandbox.
 - **`inspect_sandbox` is a query.** Every command it runs is read-only and takes no optional lock.
-- **No push, no merge, no history rewrite.** `src/process.ts` holds an allow-list of subcommands
-  and, where one has verbs of its own, of verb pairs; apply is planned here and executed by the
-  spine, never from inside this package.
+- **No push, no merge, no history rewrite, and no worktree removal.** `src/process.ts` holds an
+  allow-list of subcommands and, where one has verbs of its own, of verb pairs. It is scoped to what
+  is actually called, so a method that leaves takes its verbs with it.
 - **An identifier this adapter did not issue locates nothing.** Every path derived from a
   caller-supplied id is proven to still be inside the root it was derived from (`src/paths.ts`),
-  because `join` collapses `..` in silence and teardown is destructive at the end of a derivation.
+  because `join` collapses `..` in silence and teardown will be destructive at the end of exactly
+  that derivation.

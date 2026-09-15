@@ -2,9 +2,11 @@
  * The domain adapter contract (blueprint §20.1), written once against the SPI and run against
  * every registered adapter. Each test name quotes the section or invariant it enforces.
  *
- * Scope note: P0-10 lands the code adapter and the assertions its acceptance names. P0-13 owns the
- * rest of the §20.1 list and the deliberately non-compliant stub that must fail this suite; it
- * extends `HARNESSES` and this file rather than forking either.
+ * Scope note, twice over. P0-10 lands the code adapter and the assertions its acceptance names;
+ * P0-13 owns the rest of the §20.1 list and the deliberately non-compliant stub that must fail this
+ * suite, and extends `HARNESSES` and this file rather than forking either. Separately, the owner cut
+ * P0-10 to its read-only surface on 2026-09-15: teardown and apply are issue #108, and their
+ * assertions come back here with them. `harness.ts` names that subset as `ContractSurface`.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -13,14 +15,6 @@ import type { Sandbox } from '@internal/domain';
 import { type ChangeSet, isAnchor, isChangeSet, isRenderableChange } from '@internal/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { codeHarness } from './code-harness.js';
-
-/** Every regular file at or under a path, so an assertion need not know the adapter's layout. */
-const filesUnder = (path: string): readonly string[] => {
-  const stats = statSync(path, { throwIfNoEntry: false });
-  if (stats === undefined) return [];
-  if (!stats.isDirectory()) return [path];
-  return readdirSync(path).flatMap((name) => filesUnder(join(path, name)));
-};
 import type { ContractSubject } from './harness.js';
 
 const HARNESSES = [codeHarness];
@@ -60,7 +54,6 @@ describe.each(HARNESSES)('domain adapter contract: $name', (harness) => {
   };
   const unsavedChangeSet = async (): Promise<ChangeSet> =>
     s.adapter.compute_change_set(await withUnsavedWork());
-  const retain = { force: false, retain_artifacts: true } as const;
 
   describe('basis (§5.1, §13.2, invariant 4)', () => {
     it('§13.2: editing a resource the brief never consulted does not stale the task', async () => {
@@ -94,7 +87,7 @@ describe.each(HARNESSES)('domain adapter contract: $name', (harness) => {
     });
   });
 
-  describe('sandbox (§5.2.3, §10.4)', () => {
+  describe('sandbox (§5.2.3)', () => {
     it('§5.2.3: inspect_sandbox is non-mutating — observable bytes are identical after it runs', async () => {
       const sandbox = await withUnsavedWork();
       const before = fingerprint(s.observablePaths(sandbox));
@@ -103,84 +96,37 @@ describe.each(HARNESSES)('domain adapter contract: $name', (harness) => {
       expect(fingerprint(s.observablePaths(sandbox))).toBe(before);
     });
 
-    it('§5.2.3: inspect_sandbox is callable at any point, including after close', async () => {
+    it('§5.2.3: inspect_sandbox is callable at any point in a sandbox’s life', async () => {
       const sandbox = await opened();
       expect(await s.adapter.inspect_sandbox(sandbox)).toMatchObject({
         dirty: false,
         safe_to_close: true,
       });
-      await s.adapter.close_sandbox(sandbox, retain);
-      const after = await s.adapter.inspect_sandbox(sandbox);
-      expect(typeof after.unsaved_summary).toBe('string');
-      expect(after.unsaved_summary.length).toBeGreaterThan(0);
+      s.leaveUnsavedWork(sandbox);
+      // The same call, a different answer, and no step in between: cleanup policy reads this before
+      // a teardown is even considered, so it must never need one to have happened first.
+      expect(await s.adapter.inspect_sandbox(sandbox)).toMatchObject({
+        dirty: true,
+        safe_to_close: false,
+      });
     });
 
-    it('§10.4: close never destroys unsaved work without a record and a policy outcome', async () => {
-      const sandbox = await withUnsavedWork();
-      const inspection = await s.adapter.inspect_sandbox(sandbox);
-      expect(inspection).toMatchObject({ dirty: true, safe_to_close: false });
-
-      const refused = await s.adapter.close_sandbox(sandbox, retain);
-      expect(refused.closed).toBe(false);
-      expect(refused.refused_reason).not.toBeNull();
-      expect((await s.adapter.inspect_sandbox(sandbox)).dirty).toBe(true);
-
-      const forced = await s.adapter.close_sandbox(sandbox, { ...retain, force: true });
-      expect(forced.closed).toBe(true);
-      // The work is gone from the sandbox, so it has to be somewhere: a forced close that retained
-      // nothing would be exactly the silent destruction §10.4 exists to prevent.
-      expect(forced.retained_artifacts.length).toBeGreaterThan(0);
+    it('§5.2.3: an inspection reports every field a cleanup policy decides on', async () => {
+      const inspection = await s.adapter.inspect_sandbox(await withUnsavedWork());
+      // `unsaved_summary` and `retained_artifacts` are the two a refusal has to be able to quote.
+      // A summary that is empty when `dirty` is the report reading the same as a clean sandbox.
+      expect(inspection.unsaved_summary.length).toBeGreaterThan(0);
+      expect(Array.isArray(inspection.retained_artifacts)).toBe(true);
+      expect(inspection.safe_to_close).toBe(!inspection.dirty);
     });
 
-    it('§10.4: retained means the bytes survived, not that a filename was written down', async () => {
-      const sandbox = await opened();
-      const must_survive = s.leaveUnrecordableWork(sandbox);
-      if (must_survive.length === 0) return; // an adapter whose records carry every byte
-
-      const forced = await s.adapter.close_sandbox(sandbox, { ...retain, force: true });
-      expect(forced.closed).toBe(true);
-
-      // Deliberately indifferent to layout: the contract is that the content is recoverable, not
-      // that it lands anywhere in particular. Counting artifacts is what the test above does, and
-      // counting is exactly what let a record of NAMES pass as a record of work -- a forced close
-      // reporting `closed: true` with `retained_artifacts` set, for content that was only ever
-      // listed. Invariant 1: this is the record someone reads before accepting the loss.
-      const kept = forced.retained_artifacts.flatMap(filesUnder).map((f) => readFileSync(f));
-      for (const resource of must_survive) {
-        const found = kept.some(
-          (bytes) => Buffer.compare(bytes, Buffer.from(resource.bytes)) === 0,
-        );
-        expect(found, `${resource.label} was not recoverable from retained_artifacts`).toBe(true);
-      }
-    });
-
-    it('§10.4: a teardown record names a reference to content outside the sandbox, never resolves it', async () => {
-      const sandbox = await opened();
-      const references = s.leaveReferenceToOutsideWork(sandbox);
-      if (references.length === 0) return; // an adapter with no notion of a reference
-
-      const forced = await s.adapter.close_sandbox(sandbox, { ...retain, force: true });
-      expect(forced.closed).toBe(true);
-      const kept = forced.retained_artifacts.flatMap(filesUnder).map((f) => readFileSync(f));
-      for (const reference of references) {
-        // Content the sandbox only pointed at is content the sandbox never had. Sandbox content is
-        // agent output and project content, so following a reference lets either choose what a
-        // privileged read copies into durable evidence.
-        const resolved = kept.some((bytes) => bytes.includes(Buffer.from(reference.referent)));
-        expect(resolved, `${reference.label} was resolved into retained evidence`).toBe(false);
-        // ...and dropping it silently is the other failure: invariant 1, a record that reads the
-        // same whether there was nothing to keep or something that was not kept.
-        const named = kept.some((bytes) => bytes.includes(reference.resource_id));
-        expect(named, `${reference.label} is not named in the record at all`).toBe(true);
-      }
-    });
-
-    it('invariant 3: a sandbox identifier this adapter never issued locates nothing and destroys nothing', async () => {
+    it('invariant 3: a sandbox identifier this adapter never issued locates nothing', async () => {
       const forged = s.forgedSandbox();
       const before = fingerprint(forged.untouchable);
-      const destructive = { force: false, retain_artifacts: false } as const;
-      await expect(s.adapter.close_sandbox(forged.sandbox, destructive)).rejects.toThrow();
+      // Every adapter derives *some* location from a sandbox id. Proving the derivation is refused
+      // on a query costs nothing and is the same guard teardown (#108) will be destructive behind.
       await expect(s.adapter.inspect_sandbox(forged.sandbox)).rejects.toThrow();
+      await expect(s.adapter.compute_change_set(forged.sandbox)).rejects.toThrow();
       expect(fingerprint(forged.untouchable)).toBe(before);
     });
 
@@ -189,7 +135,7 @@ describe.each(HARNESSES)('domain adapter contract: $name', (harness) => {
       const elsewhere = { ...sandbox, project_id: `${s.project}-elsewhere` };
       await expect(s.adapter.inspect_sandbox(elsewhere)).rejects.toThrow();
       await expect(s.adapter.compute_change_set(elsewhere)).rejects.toThrow();
-      await expect(s.adapter.close_sandbox(elsewhere, retain)).rejects.toThrow();
+      await expect(s.adapter.run_checks(elsewhere, [])).rejects.toThrow();
     });
   });
 
@@ -241,73 +187,6 @@ describe.each(HARNESSES)('domain adapter contract: $name', (harness) => {
       // Bounded, and the bound is the declared one rather than however many it took.
       const bound = specs.find((spec) => spec.check_id === s.checks.flaky)?.max_attempts ?? 0;
       expect(flaky?.attempts).toBeLessThanOrEqual(bound);
-    });
-  });
-
-  describe('apply (§5.2.2, §5.5)', () => {
-    const wide = { change_budget: 10_000, max_risk: 'high' } as const;
-
-    it('§5.2.2: every operation is declarative — a target, a capability, a risk, a reversibility', async () => {
-      const plan = await s.adapter.apply_plan(await unsavedChangeSet(), wide);
-      expect(plan.operations.length).toBeGreaterThan(0);
-      for (const op of plan.operations) {
-        const named = { target_ref: expect.any(String), required_capability: expect.any(String) };
-        expect(op).toMatchObject(named);
-        expect(['low', 'medium', 'high']).toContain(op.risk);
-        expect(['revertible', 'compensable', 'irreversible']).toContain(op.reversibility);
-      }
-      // §5.2.2: no handle, no credential, nothing runnable travels back with the plan.
-      const emitted = JSON.stringify(plan).toLowerCase();
-      for (const leak of ['token', 'credential', 'secret', 'password', 'argv', 'command'])
-        expect(emitted).not.toContain(leak);
-    });
-
-    it('§16.6: a change set over the declared budget is refused, not trimmed to fit', async () => {
-      const set = await unsavedChangeSet();
-      await expect(s.adapter.apply_plan(set, { ...wide, change_budget: 0 })).rejects.toThrow();
-    });
-
-    it('§16.6: the budget is measured from the change set, not read off its summary of itself', async () => {
-      const set = await unsavedChangeSet();
-      // A change set is data handed to the gate. If the gate believes the size the change set
-      // reports, the budget is a claim its own subject gets to make -- and invariant 5 is that
-      // judgement never owns the consequence. The changes below are the real ones, untouched.
-      const understated = { ...set, change_size: 0, content_hash: 'not-a-hash' };
-      await expect(
-        s.adapter.apply_plan(understated, { ...wide, change_budget: 0 }),
-      ).rejects.toThrow();
-      // And with room to spare, so what is refused is the dishonesty rather than the size.
-      await expect(s.adapter.apply_plan(understated, wide)).rejects.toThrow();
-    });
-
-    it('§5.5: confirm_applied reconciles, and reversal is a plan or an explicit refusal', async () => {
-      const plan = await s.adapter.apply_plan(await unsavedChangeSet(), wide);
-      const done = { succeeded: true, detail: 'applied by the broker' };
-      const outcomes = plan.operations.map((op) => ({ operation_id: op.operation_id, ...done }));
-      const result = await s.adapter.confirm_applied(plan.plan_id, outcomes);
-      expect(result).toMatchObject({ plan_id: plan.plan_id, applied: true });
-      const reversal = await s.adapter.revert_or_compensate(result);
-      expect(['reversal', 'not_reversible']).toContain(reversal.kind);
-      if (reversal.kind === 'reversal') expect(reversal.operations.length).toBe(outcomes.length);
-
-      // Invariant 5: an operation this adapter did not plan cannot be reversed by guessing.
-      const elsewhere = [{ operation_id: 'planned-somewhere-else', ...done }];
-      const foreign = await s.adapter.confirm_applied(plan.plan_id, elsewhere);
-      expect((await s.adapter.revert_or_compensate(foreign)).kind).toBe('not_reversible');
-    });
-  });
-
-  describe('reconcile (§14.4, invariant 3)', () => {
-    it('invariant 3: a state the adapter cannot confirm is needs_repair with probes, and recovers', async () => {
-      const broken = await s.adapter.reconcile({ 'a-fact-nobody-can-observe': 'true' });
-      expect(broken.kind).toBe('needs_repair');
-      if (broken.kind === 'needs_repair') expect(broken.probes.length).toBeGreaterThan(0);
-
-      // Recoverable through its allowed exit: once the disputed fact is gone, it converges.
-      const converged = await s.adapter.reconcile({});
-      expect(converged.kind).toBe('converged');
-      if (converged.kind === 'converged')
-        expect(Object.keys(converged.state).length).toBeGreaterThan(0);
     });
   });
 });
