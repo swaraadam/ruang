@@ -298,6 +298,22 @@ describe('a reversal cannot be executed as the action it reverses (#89 C4)', () 
     expect(checkReversalPlan(applied, echo)).toMatchObject({ sound: false });
   });
 
+  it('refuses an undo whose content is identical to what it undoes', () => {
+    // Defence in depth for the day `disposition` and `undoes` stop being the only things that
+    // differ. Both operations here are well-formed compensations; only the content check sees it.
+    const self = operation({
+      operation_id: 'c1',
+      reversibility: 'compensable',
+      disposition: 'compensation',
+      undoes: 'c1',
+    });
+    const echo = {
+      kind: 'reversal' as const,
+      plan: planOver({ operations: [{ ...self, operation_id: 'c2' }] }),
+    };
+    expect(checkReversalPlan([self], echo)).toMatchObject({ sound: false });
+  });
+
   it('refuses a class and a disposition that do not agree', () => {
     const wrong = {
       kind: 'reversal' as const,
