@@ -6,6 +6,7 @@
  * ephemeral channel and lives in ./ephemeral.ts, which shares no type with this module.
  */
 import { CHANGE_ANCHOR_KINDS } from './anchor.js';
+import { isBasisInput } from './apply.js';
 import {
   type Check,
   bool,
@@ -20,7 +21,7 @@ import {
 } from './check.js';
 
 /** Bump on any change to the closed unions below. See the fingerprint test. */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 const staleness = oneOf('fresh', 'stale', 'unknown');
 const reversibility = oneOf('revertible', 'compensable', 'irreversible');
@@ -30,7 +31,8 @@ const subject = {
   subject_kind: oneOf('project', 'task', 'attempt', 'lock', 'apply'),
   subject_id: str,
 };
-const basisInput = shape({ resource_id: str, version: str });
+/** Invariant 7: `apply.ts` owns the basis vocabulary; restating it here would let the two drift. */
+const basisInput = isBasisInput;
 /**
  * The anchor vocabulary has one authoritative home (invariant 7): `anchor.ts`. This spelled the
  * same four kinds out again, so a fifth kind added there would have left `review.thread.created`
@@ -162,10 +164,17 @@ const PAYLOADS = {
     review_ready: bool,
     results: list(checkResult),
   }),
+  /**
+   * The `approval` row binds on `(action_fingerprint, target_ref, apply_plan_hash)` (migration v1).
+   * All three are here so the binding reconstructs from the event log alone (invariant 1): an
+   * approval whose durable record cannot say which apply it covers is not evidence of anything.
+   */
   'approval.requested': shape({
     approval_id: str,
     task_id: str,
     action_fingerprint: str,
+    target_ref: str,
+    apply_plan_hash: str,
     risk_tier: oneOf('low', 'medium', 'high'),
     reversibility,
     reversal_plan_ref: nullable(str),
@@ -173,6 +182,7 @@ const PAYLOADS = {
   'approval.decided': shape({
     approval_id: str,
     task_id: str,
+    action_fingerprint: str,
     decision: oneOf('approved', 'declined'),
     verification: oneOf('none', 'session', 'fresh-per-action'),
     decided_by_member_id: str,
@@ -181,6 +191,7 @@ const PAYLOADS = {
     apply_id: str,
     task_id: str,
     change_set_id: str,
+    target_ref: str,
     apply_plan_hash: str,
     action_fingerprint: str,
   }),
@@ -381,5 +392,5 @@ export const isDurableEventOf =
 
 /** Exhaustiveness guard for a switch over the closed union. */
 export const assertNever = (value: never): never => {
-  throw new Error(`unhandled durable event: ${JSON.stringify(value)}`);
+  throw new Error(`unhandled variant: ${JSON.stringify(value)}`);
 };

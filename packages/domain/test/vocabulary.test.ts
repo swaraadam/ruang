@@ -7,10 +7,14 @@ import { describe, expect, it } from 'vitest';
  * the *text* says — a doc comment or a string literal is exactly where a leak reads naturally, and
  * a type-level assertion cannot see either.
  */
-const SOURCE = readFileSync(
-  fileURLToPath(new URL('../src/vocabulary.ts', import.meta.url)),
-  'utf8',
-);
+const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+
+/**
+ * Both halves of the Seam A vocabulary. The apply-authority shapes moved to `packages/protocol`
+ * (P0-20) so they could sit with the digest that identifies a plan; these scans followed them,
+ * because a rule that only watches the file a type used to live in is a rule that stopped running.
+ */
+const SOURCE = `${read('../src/vocabulary.ts')}\n${read('../../protocol/src/apply.ts')}`;
 const lines = SOURCE.split('\n').map((line, i) => `${i + 1}: ${line.trim()}`);
 const offending = (re: RegExp) => lines.filter((l) => re.test(l));
 
