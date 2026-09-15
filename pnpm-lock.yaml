@@ -11,6 +11,12 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.10.0)
+      '@internal/adapter-domain-code':
+        specifier: workspace:*
+        version: link:adapters/domain/code
+      '@internal/domain':
+        specifier: workspace:*
+        version: link:packages/domain
       '@internal/gateway':
         specifier: workspace:*
         version: link:apps/gateway
@@ -56,7 +62,14 @@ importers:
 
   adapters/domain/assets: {}
 
-  adapters/domain/code: {}
+  adapters/domain/code:
+    dependencies:
+      '@internal/domain':
+        specifier: workspace:*
+        version: link:../../../packages/domain
+      '@internal/protocol':
+        specifier: workspace:*
+        version: link:../../../packages/protocol
 
   adapters/host/darwin: {}
 

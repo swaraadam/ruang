@@ -7,6 +7,15 @@
   "include": ["**/*.ts"],
   "references": [
     {
+      "path": "../adapters/domain/code"
+    },
+    {
+      "path": "../apps/gateway"
+    },
+    {
+      "path": "../packages/domain"
+    },
+    {
       "path": "../packages/persistence"
     },
     {
@@ -14,9 +23,6 @@
     },
     {
       "path": "../tsconfig.scripts.json"
-    },
-    {
-      "path": "../apps/gateway"
     }
   ]
 }

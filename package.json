@@ -18,6 +18,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@internal/adapter-domain-code": "workspace:*",
+    "@internal/domain": "workspace:*",
     "@internal/gateway": "workspace:*",
     "@internal/persistence": "workspace:*",
     "@internal/protocol": "workspace:*",
