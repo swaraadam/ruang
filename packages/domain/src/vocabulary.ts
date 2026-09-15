@@ -14,28 +14,32 @@
  *   adapter returns declarative operations and the spine invokes the broker itself.
  */
 
+import type { Basis } from '@internal/protocol';
+
 export type ProjectId = string;
 export type ResourceId = string;
 
-/** What a plan was made against. §5.1: a ref plus the inputs actually consulted. */
-export type Basis = {
-  readonly ref: string;
-  readonly inputs: readonly { readonly resource_id: ResourceId; readonly version: string }[];
-  readonly captured_at: string;
-};
-
 /**
- * §13.2, staleness without false invalidation. `unknown` is a real answer rather than an error —
- * invariant 4 makes it refuse dispatch and refuse mutation, so it has to be representable.
+ * The apply-authority half of this vocabulary now lives in `@internal/protocol` and is re-exported
+ * here unchanged, so the SPI signatures below read the same as they always did.
+ *
+ * It moved because a plan's identity is a digest, not a type (P0-20, issue #89): the adapter that
+ * builds a plan, the spine that validates it, the row that stores the approval and the view that
+ * renders it must all compute one string, and this package holds no implementation. The shapes,
+ * their validators and `apply_plan_hash` therefore sit together in one file — invariant 7 — and
+ * `packages/protocol/src/apply.ts` carries the rules and the reasoning that used to sit here.
  */
-export type Staleness =
-  | { readonly state: 'fresh' }
-  | {
-      readonly state: 'stale';
-      readonly reason: string;
-      readonly stale_inputs: readonly ResourceId[];
-    }
-  | { readonly state: 'unknown'; readonly reason: string };
+export type {
+  ApplyOperation,
+  ApplyPlan,
+  ApplyResult,
+  Basis,
+  BrokerOutcome,
+  OperationDisposition,
+  ReversalPlan,
+  ReversibilityClass,
+  Staleness,
+} from '@internal/protocol';
 
 /** §10.1. `Sandbox` is the core term; what backs it is the adapter's business. */
 export type Sandbox = {
@@ -73,48 +77,6 @@ export type CheckResult = {
   readonly result: 'passed' | 'failed' | 'skipped' | 'flaky';
   readonly artifact_ref: string | null;
 };
-
-/** §5.5, §12.4. Weakest to strongest; invariant 5 turns on the last one. */
-export type ReversibilityClass = 'revertible' | 'compensable' | 'irreversible';
-
-/**
- * §5.2.2, and the reason this package can be handed to an adapter safely.
- *
- * Declarative only: `target_ref` names what is touched and `required_capability` what the spine
- * must hold to touch it. No handle, no token, no command line — an operation describes an intent
- * the spine then validates against role, basis, approval fingerprint and budget.
- */
-export type ApplyOperation = {
-  readonly operation_id: string;
-  readonly target_ref: string;
-  readonly required_capability: string;
-  readonly risk: 'low' | 'medium' | 'high';
-  readonly reversibility: ReversibilityClass;
-};
-
-export type ApplyPlan = {
-  readonly plan_id: string;
-  readonly basis: Basis;
-  readonly operations: readonly ApplyOperation[];
-};
-
-/** What the spine observed executing one operation, handed back for the adapter to reconcile. */
-export type BrokerOutcome = {
-  readonly operation_id: string;
-  readonly succeeded: boolean;
-  readonly detail: string;
-};
-
-export type ApplyResult = {
-  readonly plan_id: string;
-  readonly outcomes: readonly BrokerOutcome[];
-  readonly applied: boolean;
-};
-
-/** `not_reversible` is a first-class answer: invariant 5 would rather freeze than improvise. */
-export type ReversalPlan =
-  | { readonly kind: 'reversal'; readonly operations: readonly ApplyOperation[] }
-  | { readonly kind: 'not_reversible'; readonly reason: string };
 
 /** §14.4. `needs_repair` carries probes, because ambiguity is resolved by looking, not guessing. */
 export type ReconcileResult =

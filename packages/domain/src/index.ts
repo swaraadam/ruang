@@ -8,6 +8,7 @@ export type {
   CheckResult,
   CheckSpec,
   ClosePolicy,
+  OperationDisposition,
   ProjectId,
   ReconcileResult,
   RenderSurface,

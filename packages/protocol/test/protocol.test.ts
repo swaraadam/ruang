@@ -6,6 +6,7 @@ import {
   type EventEnvelope,
   DURABLE_EVENT_TYPES,
   PAYLOAD_VALIDATORS,
+  APPLY_FINGERPRINT,
   PROTOCOL_VERSION,
   VOCABULARY_FINGERPRINT,
   assertNever,
@@ -186,13 +187,35 @@ describe('ephemeral channels are unpersistable by type (invariant 2)', () => {
  * removing or renaming any of them changes it, and the only way back to green is a new
  * PROTOCOL_VERSION with its own pinned entry below.
  */
+const APPLY_FINGERPRINT_V2 =
+  'basis(ref,inputs,captured_at);' +
+  'operation(operation_id,operation,target_ref,required_capability,risk,reversibility,' +
+  'disposition,undoes);' +
+  'plan(plan_id,basis,change_set_hash,operations);' +
+  'outside(plan_id,basis.captured_at,operations[].operation_id);' +
+  'fingerprint(operation,project_id,task_id,basis_ref,change_set_hash,target_ref,' +
+  'apply_plan_hash,reversibility_class)';
+
 const PINNED_FINGERPRINTS: Readonly<Record<number, string>> = {
   1: 'aaeedb35ed4b5a471110ec3a05b45c107637815aa79ffde3c478e996a88ab399',
+  // v2 (P0-20): `approval.requested` and `apply.started` carry the full binding triple, and
+  // `approval.decided` names the fingerprint it decided, so the binding replays from the log.
+  2: 'f9a04d968c6ad038a7a8015a261a8e488e480dc428e8991a536933ad1c4e0dca',
 };
 
 describe('PROTOCOL_VERSION', () => {
   it('is pinned to the exact vocabulary it describes', () => {
     const actual = createHash('sha256').update(VOCABULARY_FINGERPRINT).digest('hex');
     expect(PINNED_FINGERPRINTS[PROTOCOL_VERSION]).toBe(actual);
+  });
+
+  /**
+   * The same device for the apply-authority union (P0-20). It pins the exclusion list too: a path
+   * quietly added to `APPLY_PLAN_HASH_OUTSIDE` narrows what an approval covers, and that edit has
+   * to fail here rather than pass unnoticed.
+   */
+  it('pins the apply vocabulary and what its digest leaves out', () => {
+    expect(PROTOCOL_VERSION).toBe(2);
+    expect(APPLY_FINGERPRINT).toBe(APPLY_FINGERPRINT_V2);
   });
 });

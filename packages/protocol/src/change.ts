@@ -6,6 +6,7 @@
  * is data only, which `change.test.ts` asserts by scanning field names rather than trusting this.
  */
 import { isAnchor, unionCheck } from './anchor.js';
+import { canonicalJson, sha256Hex } from './digest.js';
 import { type Check, type Of, int, isRecord, list, oneOf, shape, str } from './check.js';
 
 /**
@@ -63,40 +64,24 @@ export const RENDERABLE_FINGERPRINT = RENDERABLE_CHANGE_KINDS.map(
   (k) => `change:${k}(${(RENDERABLE[k].fields ?? []).join(',')})`,
 ).join(';');
 
-/** Canonical JSON: keys sorted at every depth; array order is preserved because order is content. */
-const canonical = (value: unknown): string => {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (isRecord(value)) {
-    const body = Object.keys(value)
-      .sort()
-      .map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`)
-      .join(',');
-    return `{${body}}`;
-  }
-  return JSON.stringify(value) ?? 'null';
-};
-
 /**
  * A hash over the *content*, excluding `content_hash` and `change_set_id`. Excluding the id is what
  * makes it a content hash: the same changes captured twice are one review under two identities.
- * Stability comes from `canonical`, not from JSON.stringify, whose key order follows insertion.
+ * Stability comes from `canonicalJson`, not from JSON.stringify, whose key order follows insertion.
  *
- * **Not cryptographic.** 64 bits, two FNV-style rounds: `packages/protocol` is imported by the
- * browser bundle, so `node:crypto` is unavailable and §8 forbids a new dependency without an ADR
- * line. The acceptance asks for stability, which this meets; it would not withstand a deliberate
- * collision. If a change-set hash ever gates an apply decision, revisit then — it does not today.
+ * Everything is copied in and two keys are removed by name, rather than the covered fields being
+ * listed, so a field added to `ChangeSet` is inside the digest without anyone remembering to add it.
+ *
+ * **Now cryptographic.** This was 64 bits of FNV, with a note saying to revisit "if a change-set
+ * hash ever gates an apply decision". P0-20 is that day: `ApplyPlan.change_set_hash` carries this
+ * value into `action_fingerprint` (§12.3), so its collision resistance is the binding's. See
+ * `digest.ts` for why SHA-256 is written out rather than imported.
  */
 export const changeSetHash = (set: Omit<ChangeSet, 'content_hash'>): string => {
   // Both, not just the id: `Omit` does not stop a full ChangeSet being passed (excess-property
   // checks apply only to fresh literals), so a stored set would fold its own hash into the digest.
-  const content = { ...set, change_set_id: undefined, content_hash: undefined };
-  let h1 = 0x811c9dc5;
-  let h2 = 0x01000193;
-  const text = canonical(content);
-  for (let i = 0; i < text.length; i += 1) {
-    const c = text.charCodeAt(i);
-    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
-    h2 = Math.imul(h2 + c, 0x85ebca6b) >>> 0;
-  }
-  return `${h1.toString(16).padStart(8, '0')}${h2.toString(16).padStart(8, '0')}`;
+  const content: Record<string, unknown> = { ...set };
+  delete content['change_set_id'];
+  delete content['content_hash'];
+  return sha256Hex(`change_set/2\n${canonicalJson(content)}`);
 };
