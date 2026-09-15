@@ -18,6 +18,42 @@ export {
   isRenderableChange,
 } from './change.js';
 export { ANCHOR_FINGERPRINT, CHANGE_ANCHOR_KINDS, isAnchor, unionCheck } from './anchor.js';
+export type {
+  ActionFingerprintInput,
+  ApplyAction,
+  ApplyOperation,
+  ApplyPlan,
+  ApplyResult,
+  ApprovalBinding,
+  Basis,
+  BasisInput,
+  BindingVerdict,
+  BrokerOutcome,
+  OperationDisposition,
+  ReversalPlan,
+  ReversalVerdict,
+  ReversibilityClass,
+  Staleness,
+} from './apply.js';
+export {
+  ACTION_FINGERPRINT_FIELDS,
+  APPLY_FINGERPRINT,
+  APPLY_PLAN_HASH_OUTSIDE,
+  APPLY_PLAN_HASH_SCHEME,
+  UNDO_DISPOSITION,
+  actionFingerprint,
+  applyOperationHash,
+  applyPlanHash,
+  approvalBinding,
+  basisStaleness,
+  bindingMatches,
+  checkReversalPlan,
+  isApplyOperation,
+  isApplyPlan,
+  isBasis,
+  isBasisInput,
+  isReversalPlan,
+} from './apply.js';
 export { DigestRefusal, canonicalJson, digestExcluding, sha256Hex } from './digest.js';
 export type { Check, Infer } from './check.js';
 export { bool, int, isRecord, list, nullable, num, oneOf, shape, str } from './check.js';

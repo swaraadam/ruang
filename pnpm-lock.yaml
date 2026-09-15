@@ -11,6 +11,9 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.10.0)
+      '@internal/domain':
+        specifier: workspace:*
+        version: link:packages/domain
       '@internal/gateway':
         specifier: workspace:*
         version: link:apps/gateway
@@ -20,6 +23,9 @@ importers:
       '@internal/protocol':
         specifier: workspace:*
         version: link:packages/protocol
+      '@internal/web':
+        specifier: workspace:*
+        version: link:apps/web
       '@types/better-sqlite3':
         specifier: ^7.6.11
         version: 7.6.13
@@ -86,7 +92,11 @@ importers:
         specifier: ^8.18.1
         version: 8.18.1
 
-  apps/web: {}
+  apps/web:
+    dependencies:
+      '@internal/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
 
   packages/attention: {}
 

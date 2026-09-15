@@ -70,7 +70,7 @@ describe('the anchor union is closed', () => {
   // §5.2.1: "new shapes require a protocol version bump and a renderer case" — which a comment
   // cannot enforce. Pinning the fingerprint to the version makes a new kind fail here first.
   it('cannot gain a kind without a deliberate version bump', () => {
-    expect(PROTOCOL_VERSION).toBe(1);
+    expect(PROTOCOL_VERSION).toBe(2);
     expect(ANCHOR_FINGERPRINT).toBe(
       'anchor:text_range(resource_id,start_line,end_line);' +
         'anchor:asset_id(asset_id);' +

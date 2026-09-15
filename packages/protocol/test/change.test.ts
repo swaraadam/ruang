@@ -57,7 +57,7 @@ describe('the renderable union is closed', () => {
   // §5.2.1: "new shapes require a protocol version bump and a renderer case" — which a comment
   // cannot enforce. Pinning the fingerprint to the version makes a new case fail here first.
   it('cannot gain a shape without a deliberate version bump', () => {
-    expect(PROTOCOL_VERSION).toBe(1);
+    expect(PROTOCOL_VERSION).toBe(2);
     expect(RENDERABLE_FINGERPRINT).toBe(
       'change:text_patch(resource_id,anchors,added,removed);' +
         'change:asset_delta(asset_id,before_ref,after_ref,bytes_delta);' +
