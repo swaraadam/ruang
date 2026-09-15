@@ -30,7 +30,7 @@ import { describe, expect, it } from 'vitest';
 // took 120s before failing.
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
-const SCRIPTS = ['gate-check.sh', 'audit-seams.sh', 'audit-identity.sh'];
+const SCRIPTS = ['gate-check.sh', 'audit-seams.sh', 'audit-identity.sh', 'audit-scope.sh'];
 
 /** A throwaway tree holding only the scripts, plus whichever scan roots are asked for. */
 const makeTree = (scanRoots: string[]) => {
