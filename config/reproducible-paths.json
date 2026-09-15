@@ -1,0 +1,38 @@
+{
+  "_why": [
+    "THE ONE DECLARATION OF WHAT TEARDOWN MAY DESTROY. Read by scripts/sandbox.sh and by",
+    "adapters/domain/code's inspect_sandbox/close_sandbox. Issue #103: the script's own comment",
+    "said it 'mirrors inspect_sandbox()', and it mirrored the bug -- so the rule lives here, in",
+    "one file, rather than twice in two languages where it would drift.",
+    "",
+    "THE QUESTION TEARDOWN ASKS IS NOT THE CHANGE-SET QUESTION. A change set asks what may be",
+    "applied; teardown asks whether anything here exists ONLY here. `git status --porcelain`",
+    "answers neither -- it omits ignored files entirely, so a sandbox whose only copy of some work",
+    "sits under an ordinary .gitignore reported dirty_files: 0 and safe_to_close: true.",
+    "",
+    "THE DISTINCTION IS REPRODUCIBILITY, NOT TRACKED-NESS. An ignored build artifact can be",
+    "rebuilt; an ignored notes/ directory cannot. Everything ignored and NOT listed below counts",
+    "as unreproducible and blocks teardown. Adding an entry here is a claim that the path can be",
+    "regenerated from the source of record by a documented command -- state the command.",
+    "",
+    "The 2026-09-13 run nearly lost 1400 authored lines to a sandbox believed empty, and was saved",
+    "only by inspect reporting dirty_files: 21. This list is what that check is worth."
+  ],
+  "reproducible": [
+    { "path": "node_modules", "regenerated_by": "pnpm install" },
+    { "path": "dist", "regenerated_by": "pnpm run typecheck && pnpm run build" },
+    { "path": ".turbo", "regenerated_by": "any turbo run; it is a cache" },
+    { "path": "coverage", "regenerated_by": "pnpm test -- --coverage" },
+    { "path": "state/dev", "regenerated_by": "pnpm seed" },
+    { "path": "logs", "regenerated_by": "nothing regenerates a log; it is diagnostic, not work" },
+    { "path": "*.sqlite", "regenerated_by": "pnpm seed" },
+    { "path": "*.sqlite-wal", "regenerated_by": "pnpm seed" },
+    { "path": "*.sqlite-shm", "regenerated_by": "pnpm seed" }
+  ],
+  "_not_listed_on_purpose": [
+    "state/artifacts -- retention classes live there; §7 makes SQLite the authoritative home for",
+    "control-plane history, and an artifact under a retention class is evidence, not scratch.",
+    "state/debug -- CLAUDE.md §8 permits rm -rf there, but permitting deletion is not the same as",
+    "claiming regeneration. A debug capture of a crash exists only once."
+  ]
+}
