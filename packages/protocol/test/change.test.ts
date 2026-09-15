@@ -8,6 +8,7 @@ import {
   changeSetHash,
   isChangeSet,
   isRenderableChange,
+  sha256Hex,
 } from '../src/index.js';
 
 const assetDelta: RenderableChange = {
@@ -101,10 +102,19 @@ describe('fixtures validate and round-trip', () => {
 });
 
 describe('the content hash is stable', () => {
+  // P0-20: this digest is carried into `action_fingerprint` (§12.3), so its strength is the
+  // binding's. FIPS 180-4 B.1/B.2 known-answer vectors, against a hand-written SHA-256.
+  it('is really SHA-256 and not a look-alike', () => {
+    expect(sha256Hex('')).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+    expect(sha256Hex('abc')).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
+  });
+
   it('is unchanged across repeated serialization of the same content', () => {
     const once = changeSetHash(set);
     expect(changeSetHash(JSON.parse(JSON.stringify(set)) as typeof set)).toBe(once);
-    expect(once).toMatch(/^[0-9a-f]{16}$/);
+    expect(once).toMatch(/^[0-9a-f]{64}$/);
     // And the id is not content: the same changes under two ids are the same review.
     expect(changeSetHash({ ...set, change_set_id: 'cs-2' })).toBe(once);
   });
