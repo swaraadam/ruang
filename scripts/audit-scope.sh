@@ -64,7 +64,15 @@ AUDIT_EXCLUDE_SELF=(
   'packages/domain/test/vocabulary.test.ts'   # asserts invariant 9, stricter than this audit
   'packages/domain/test/spi.test.ts'          # same, for the SPI surface
   'packages/policy/test/capability.test.ts'   # asserts invariant 8 by matching /isMe|isOwner/
+  'tests/audit-scope.test.ts'                 # feeds this audit its own banned words as probes
 )
+
+# That last entry is the self-reference trap closing on itself, and it is worth saying how it was
+# found. tests/audit-scope.test.ts exists to prove `tests/` is in scope -- so it necessarily
+# contains 'tmux' and 'launchd' as probe strings, and the first run of the very audit it tests
+# flagged it. The exemption is correct, but note what it costs: this file can now hold a real leak
+# invisibly. It is named, printed on every run, and it is the ONLY test file here that is not
+# asserting a vocabulary rule, which is the line to hold if the list ever grows again.
 
 audit_excludes_all() {
   printf '%s\n' "${AUDIT_EXCLUDE_NOT_SOURCE[@]}" "${AUDIT_EXCLUDE_PROSE[@]}" "${AUDIT_EXCLUDE_SELF[@]}"
