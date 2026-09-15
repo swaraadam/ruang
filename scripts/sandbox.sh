@@ -35,10 +35,33 @@ unreproducible() {
     echo "REFUSING: $REPRO_JSON is missing. Teardown cannot decide what is safe to destroy." >&2
     exit 2
   fi
-  git status --porcelain --ignored=matching 2>/dev/null | grep '^!! ' | sed 's/^!! //' \
-    | python3 -c '
+  # NO `|| true` ON THIS PIPELINE, AND THE EXIT STATUS IS READ. An earlier version ended it with
+  # `|| true` to keep `set -e` from firing on grep's empty-match exit 1. That masked every other
+  # failure too -- malformed JSON, a missing "reproducible" key, or no python3 on the host, none of
+  # which §5's stack guarantees. Each produced EMPTY STDOUT, which is indistinguishable from
+  # "nothing unreproducible found": UNREPRO_N read 0, inspect said safe_to_close: true, and close
+  # walked past the gate into an irreversible `git worktree remove`.
+  #
+  # That is #103's own defect one layer down -- a teardown check reporting "safe" when it does not
+  # know -- reintroduced inside the fix for it. A check that failed must never be read as a check
+  # that passed.
+  #
+  # AND EXIT STATUS ALONE CANNOT SAY SO. The first attempt at this fix read the pipeline status and
+  # tolerated 1 as "grep found no matches" -- but an unhandled Python exception also exits 1, so a
+  # malformed config was still indistinguishable from a clean tree, and inspect still said
+  # safe_to_close: true. Measured, not reasoned: it reproduced on the very repro written for it.
+  #
+  # So the check now CONFIRMS ITSELF POSITIVELY. python prints a sentinel as its last line only on
+  # a completed pass. No sentinel means the check did not finish -- crash, malformed JSON, missing
+  # python3, truncated pipe -- and teardown refuses. Absence of evidence is not evidence here.
+  local out rc
+  out=$(
+    set -o pipefail
+    git status --porcelain --ignored=matching | grep '^!! ' | sed 's/^!! //' \
+      | python3 -c '
 import json, sys, fnmatch
-spec = [e["path"] for e in json.load(open(sys.argv[1]))["reproducible"]]
+cfg = json.load(open(sys.argv[1]))
+spec = [e["path"] for e in cfg["reproducible"]] + [e["path"] for e in cfg.get("disposable", [])]
 def reproducible(p):
     # A declared path matches AT ANY DEPTH, not only at the repository root. This is a pnpm
     # workspace: dist/ and node_modules/ exist under every package, so a root-anchored match left
@@ -60,7 +83,17 @@ for line in sys.stdin:
     p = line.strip()
     if p and not reproducible(p):
         print(p)
-' "$REPRO_JSON" || true
+print("__UNREPRO_CHECK_COMPLETED__")
+' "$REPRO_JSON"
+  ) || true
+  if [[ "$(printf '%s' "$out" | tail -n 1)" != "__UNREPRO_CHECK_COMPLETED__" ]]; then
+    echo "REFUSING: the unreproducible-content check did not complete." >&2
+    echo "  It prints a sentinel on a finished pass; there is none, so it crashed, could not read" >&2
+    echo "  $REPRO_JSON, or found no python3. Teardown will not treat a check that did not run" >&2
+    echo "  as a check that found nothing." >&2
+    exit 2
+  fi
+  printf '%s' "$out" | sed '$d'
 }
 
 CMD="${1:-}"; ID="${2:-}"; SLUG="${3:-}"
@@ -88,11 +121,16 @@ case "$CMD" in
     echo "unlanded_commits: $UNPUSHED"
     echo "unreproducible_ignored: $UNREPRO_N"
     git status --short
-    [[ -n "$UNREPRO" ]] && { echo "  ignored, and not declared reproducible:"; printf '  !! %s\n' $UNREPRO; }
+    if [[ -n "$UNREPRO" ]]; then
+      echo "  ignored, and not declared reproducible:"
+      # Read line-by-line and quoted: a path with a space or a glob character would otherwise be
+      # word-split or pathname-expanded, and this list is the evidence the owner acts on.
+      while IFS= read -r f; do [[ -n "$f" ]] && printf '  !! %s\n' "$f"; done <<< "$UNREPRO"
+    fi
     # #103 asked for the judgement to be visible rather than silent: say what was discounted.
     echo "  discounted as reproducible: $(python3 -c '
 import json,sys
-print(" ".join(e["path"] for e in json.load(open(sys.argv[1]))["reproducible"]))' "$REPRO_JSON" 2>/dev/null)"
+c=json.load(open(sys.argv[1]));print(" ".join(e["path"] for e in c["reproducible"]+c.get("disposable",[])))' "$REPRO_JSON" 2>/dev/null)"
     if [[ "$DIRTY" -eq 0 && "$UNPUSHED" -eq 0 && "$UNREPRO_N" -eq 0 ]]; then echo "safe_to_close: true"; else echo "safe_to_close: false"; fi
     ;;
   close)
@@ -108,17 +146,18 @@ print(" ".join(e["path"] for e in json.load(open(sys.argv[1]))["reproducible"]))
     if [[ -n "$UNREPRO" ]]; then
       RESCUE="$ROOT/state/debug/sandbox-rescue/$ID-$(date +%Y%m%dT%H%M%S)"
       mkdir -p "$RESCUE"
-      printf '%s\n' $UNREPRO | while IFS= read -r f; do
+      while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
         [[ -e "$f" ]] || continue
         mkdir -p "$RESCUE/$(dirname "$f")"; cp -R "$f" "$RESCUE/$f"
-      done
+      done <<< "$UNREPRO"
       echo "rescued $UNREPRO_N ignored-unreproducible path(s) to:"
       echo "  $RESCUE"
     fi
     if [[ "$DIRTY" -ne 0 || "$UNPUSHED" -ne 0 || "$UNREPRO_N" -ne 0 ]]; then
       echo "REFUSING to close: dirty, unlanded, or unreproducible work present"
       echo "  (dirty=$DIRTY unlanded=$UNPUSHED unreproducible_ignored=$UNREPRO_N)."
-      [[ -n "$UNREPRO" ]] && printf '  !! %s\n' $UNREPRO
+      while IFS= read -r f; do [[ -n "$f" ]] && printf '  !! %s\n' "$f"; done <<< "$UNREPRO"
       echo "Record a policy outcome on the issue and get an owner decision first."
       exit 1
     fi

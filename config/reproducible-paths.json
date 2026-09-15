@@ -4,22 +4,28 @@
     "adapters/domain/code's inspect_sandbox/close_sandbox. Issue #103: the script's own comment",
     "said it 'mirrors inspect_sandbox()', and it mirrored the bug -- so the rule lives here, in",
     "one file, rather than twice in two languages where it would drift.",
-    "",
     "THE QUESTION TEARDOWN ASKS IS NOT THE CHANGE-SET QUESTION. A change set asks what may be",
     "applied; teardown asks whether anything here exists ONLY here. `git status --porcelain`",
     "answers neither -- it omits ignored files entirely, so a sandbox whose only copy of some work",
     "sits under an ordinary .gitignore reported dirty_files: 0 and safe_to_close: true.",
-    "",
     "THE DISTINCTION IS REPRODUCIBILITY, NOT TRACKED-NESS. An ignored build artifact can be",
     "rebuilt; an ignored notes/ directory cannot. Everything ignored and NOT listed below counts",
     "as unreproducible and blocks teardown. Adding an entry here is a claim that the path can be",
     "regenerated from the source of record by a documented command -- state the command.",
-    "",
     "The 2026-09-13 run nearly lost 1400 authored lines to a sandbox believed empty, and was saved",
     "only by inspect reporting dirty_files: 21. This list is what that check is worth.",
-    "",
     "PATHS MATCH AT ANY DEPTH. This is a pnpm workspace: dist/ and node_modules/ exist under",
-    "every package, so an entry here means that name wherever it appears, not only at the root."
+    "every package, so an entry here means that name wherever it appears, not only at the root.",
+    "",
+    "TWO LISTS, BECAUSE THEY ARE TWO CLAIMS. `reproducible` means the path can be REGENERATED from the",
+    "source of record, and each entry must name the command that does it. `disposable` means the path",
+    "was never work in the first place, so there is nothing to regenerate and nothing to lose.",
+    "",
+    "They were one list until the review of PR #107 pointed out that the `logs` entry could not meet",
+    "the stated bar -- its regenerated_by read 'nothing regenerates a log', which is an admission, not",
+    "a command. One list forced a false claim, and the risk is that the next entry copies its shape",
+    "for something that really is precious. Teardown treats both as non-blocking; the distinction is",
+    "for the human deciding whether a new entry belongs."
   ],
   "reproducible": [
     {
@@ -43,10 +49,6 @@
       "regenerated_by": "pnpm seed"
     },
     {
-      "path": "logs",
-      "regenerated_by": "nothing regenerates a log; it is diagnostic, not work"
-    },
-    {
       "path": "*.sqlite",
       "regenerated_by": "pnpm seed"
     },
@@ -59,10 +61,6 @@
       "regenerated_by": "pnpm seed"
     },
     {
-      "path": ".DS_Store",
-      "regenerated_by": "the Finder; it is macOS metadata, never work"
-    },
-    {
       "path": "__pycache__",
       "regenerated_by": "any python3 run; it is bytecode cache"
     }
@@ -72,5 +70,15 @@
     "control-plane history, and an artifact under a retention class is evidence, not scratch.",
     "state/debug -- CLAUDE.md \u00a78 permits rm -rf there, but permitting deletion is not the same as",
     "claiming regeneration. A debug capture of a crash exists only once."
+  ],
+  "disposable": [
+    {
+      "path": "logs",
+      "disposable_because": "a log is diagnostic output about work, never the work itself; nothing regenerates one and nothing depends on one"
+    },
+    {
+      "path": ".DS_Store",
+      "disposable_because": "Finder metadata; it is not authored and carries no content"
+    }
   ]
 }

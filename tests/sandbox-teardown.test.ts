@@ -111,6 +111,56 @@ describe('sandbox teardown (#103)', () => {
     );
   });
 
+  /**
+   * B1 from the review of PR #107, and it was right. The check ended in `|| true` to stop `set -e`
+   * firing on grep's empty-match, which masked every other failure too: a crash produced empty
+   * stdout, indistinguishable from "nothing unreproducible found", so `safe_to_close: true` and
+   * `close` walked into an irreversible `git worktree remove`. #103's own defect one layer down.
+   *
+   * The first fix read the pipeline's exit status and tolerated 1 as grep's no-match — but an
+   * unhandled Python exception also exits 1, so it still failed open. These tests exist because
+   * that second version passed review-by-reasoning and failed the moment it was run.
+   */
+  it('refuses when the check itself crashes, rather than reading empty output as clean', () => {
+    const root = fixture();
+    writeFileSync(join(root, 'config/reproducible-paths.json'), '{ broken');
+    const r = run(root, 'inspect');
+    expect(r.status).toBe(2);
+    expect(`${r.stdout}${r.stderr}`).toContain('did not complete');
+    expect(r.stdout).not.toContain('safe_to_close: true');
+  });
+
+  it('does not destroy the sandbox when the check crashes', () => {
+    const root = fixture();
+    writeFileSync(join(root, 'config/reproducible-paths.json'), '{ broken');
+    const r = run(root, 'close');
+    expect(r.status).toBe(2);
+    // The property that matters: an irreversible step never runs on an unanswered question.
+    expect(existsSync(join(root, '.sandboxes/T'))).toBe(true);
+  });
+
+  it('refuses when python3 is unavailable, which the stack does not guarantee', () => {
+    const root = fixture();
+    mkdirSync(join(root, 'fakebin'));
+    writeFileSync(join(root, 'fakebin/python3'), '#!/bin/sh\nexit 127\n');
+    chmodSync(join(root, 'fakebin/python3'), 0o755);
+    const r = spawnSync('./scripts/sandbox.sh', ['inspect', 'T'], {
+      cwd: root,
+      encoding: 'utf8',
+      timeout: 30_000,
+      env: { ...process.env, PATH: `${join(root, 'fakebin')}:${process.env.PATH ?? ''}` },
+    });
+    expect(r.status).toBe(2);
+    expect(r.stdout).not.toContain('safe_to_close: true');
+  });
+
+  it('finds content whose path contains a space', () => {
+    const root = fixture();
+    writeFileSync(join(root, '.sandboxes/T/notes/plan with space.md'), 'only copy\n');
+    const out = run(root, 'inspect').stdout;
+    expect(out).toContain('safe_to_close: false');
+  });
+
   it('refuses outright when the reproducible list is absent, rather than guessing', () => {
     const root = fixture();
     writeFileSync(join(root, 'config/reproducible-paths.json'), '');
