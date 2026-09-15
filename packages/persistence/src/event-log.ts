@@ -118,6 +118,41 @@ export const latestSeq = (db: Db, ownerId: string): number =>
   ).s;
 
 /**
+ * Whether this owner's log is whole: every sequence from 1 to the latest, with no hole anywhere.
+ *
+ * **This is the same rule `readSince` enforces, asked about the log instead of about a range.**
+ * `readSince` checks `rows[i].seq === afterSeq + 1 + i`, which is contiguity RELATIVE TO THE
+ * CALLER'S RESUME POINT: a client that asks for the sequence after a hole gets a run that is
+ * perfectly contiguous from where it asked, and cannot see what is missing behind it. Asking that
+ * question is how a reader bypassed a refusal the other reader had already made about the same
+ * database. A hole is a property of the log, so the question has to be asked of the log.
+ *
+ * Counting is nearly enough: `seq` values are distinct per owner (v1's `PRIMARY KEY (owner_id,
+ * seq)`), so `COUNT(*) = MAX(seq)` holds when every value from 1 to the maximum is present. It does
+ * NOT hold only then. "Allocated from 1" is a property of `appendEvent`, not of the file — which is
+ * the argument this comment already makes four lines up — and v1 carries no `CHECK (seq >= 1)`, so
+ * a single row at `seq <= 0` restores the equality over a hole and this returned `true` about a log
+ * that is demonstrably holed. Hence `MIN(seq) = 1` as well: the count fixes the interior, the
+ * minimum fixes the start, and neither alone is the property. `COALESCE(MIN(seq), 1)` makes the
+ * empty log whole, which it is. Still the index, not the rows.
+ *
+ * The `CHECK` belongs in the schema and is not added here: v1 is frozen, and `migration.test.ts`
+ * pins the schema hash precisely so that editing it fails rather than diverging silently. Worse,
+ * `openControlPlaneDatabase` proves identity by fingerprinting that schema, so a `CHECK` added to
+ * v1 would make every database already on disk foreign to the build that reads it. It is a v2 line
+ * (filed on #87), and this predicate is what holds until then.
+ */
+export const eventLogIsWhole = (db: Db, ownerId: string): boolean => {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n, COALESCE(MIN(seq), 1) AS lo, COALESCE(MAX(seq), 0) AS hi
+         FROM event WHERE owner_id = ?`,
+    )
+    .get(ownerId) as { n: number; lo: number; hi: number };
+  return row.n === row.hi && row.lo === 1;
+};
+
+/**
  * Events after `afterSeq`, in order, up to `limit`.
  *
  * **Returns a contiguous run or nothing.** §15.2: "If sequence recovery is incomplete, fetch a

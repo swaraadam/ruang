@@ -6,27 +6,33 @@
     "node": ">=22"
   },
   "scripts": {
-    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test && ./scripts/audit-seams.sh && ./scripts/audit-identity.sh",
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test && ./scripts/audit-seams.sh && ./scripts/audit-identity.sh && ./scripts/audit-guardrail-drift.sh",
     "typecheck": "tsc -b",
     "lint": "eslint . && prettier --check .",
     "test": "vitest run",
-    "audit": "./scripts/audit-seams.sh && ./scripts/audit-identity.sh",
+    "audit": "./scripts/audit-seams.sh && ./scripts/audit-identity.sh && ./scripts/audit-guardrail-drift.sh",
     "ready": "python3 scripts/next-ready.py",
     "gate": "./scripts/gate-check.sh",
     "seed": "tsc -b tsconfig.scripts.json && node dist/scripts/seed.js",
     "dev": "./scripts/dev.sh"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@internal/adapter-domain-code": "workspace:*",
     "@internal/domain": "workspace:*",
+    "@internal/gateway": "workspace:*",
     "@internal/persistence": "workspace:*",
     "@internal/protocol": "workspace:*",
-    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.20.1",
+    "@types/ws": "^8.18.1",
+    "better-sqlite3": "^12.2.0",
     "eslint": "^10.10.0",
+    "fastify": "^5.12.4",
     "prettier": "^3.9.6",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "ws": "^8.21.3"
   }
 }

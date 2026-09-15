@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type AppendableEvent,
   appendEvent,
+  eventLogIsWhole,
   latestSeq,
   openMemoryDatabase,
   readSince,
@@ -155,6 +156,50 @@ describe('replay resumes from a sequence, or refuses (§15.2)', () => {
     appendEvent(db, ev('o1'));
     appendEvent(db, ev('o2'));
     expect(readSince(db, 'o1', 0)?.map((e) => e.owner_id)).toEqual(['o1']);
+    db.close();
+  });
+});
+
+/**
+ * `eventLogIsWhole` asked `COUNT(*) = MAX(seq)` and nothing else. "Allocated from 1" is a property
+ * of `appendEvent`, not of the file, and v1 carries no `CHECK (seq >= 1)` — so one row at `seq <= 0`
+ * restores the equality across a hole and the predicate answered `true` about a holed log. Executed
+ * before the fix: with seq 5 deleted and a row at seq 0, `/api/office/state` answered 409 while
+ * `?since=5` streamed seqs 6-20. The simple deleted-row case (below, and already covered) passes
+ * either way, which is why it proved nothing here.
+ */
+describe('a log is whole only if it starts at 1 as well as having no interior hole', () => {
+  const holed = (pad: number | null) => {
+    const db = seed();
+    for (let i = 0; i < 20; i += 1) appendEvent(db, ev());
+    db.prepare(`DELETE FROM event WHERE owner_id='o1' AND seq=5`).run();
+    if (pad !== null) {
+      db.prepare(
+        `INSERT INTO event (owner_id,seq,org_node_id,ts,type,actor_member_id,payload,artifact_refs)
+         VALUES ('o1',?, 'n-o1','t','task.created','m1','{}','[]')`,
+      ).run(pad);
+    }
+    return db;
+  };
+
+  it('calls a clean log whole, and an empty one too', () => {
+    const clean = seed();
+    for (let i = 0; i < 20; i += 1) appendEvent(clean, ev());
+    expect(eventLogIsWhole(clean, 'o1')).toBe(true);
+    clean.close();
+    const empty = seed();
+    expect(eventLogIsWhole(empty, 'o1')).toBe(true);
+    empty.close();
+  });
+
+  it.each([
+    ['no padding row', null],
+    ['a padding row at seq 0', 0],
+    ['a padding row at seq -1', -1],
+  ])('refuses a log with a hole at seq 5 and %s', (_label, pad) => {
+    const db = holed(pad);
+    // The count is restored by the padding row; the minimum is what the hole cannot fake.
+    expect(eventLogIsWhole(db, 'o1')).toBe(false);
     db.close();
   });
 });

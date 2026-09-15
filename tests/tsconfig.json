@@ -1,12 +1,28 @@
 {
   "extends": "../tsconfig.base.json",
-  "compilerOptions": { "outDir": "dist", "types": ["node"] },
+  "compilerOptions": {
+    "outDir": "dist",
+    "types": ["node"]
+  },
   "include": ["**/*.ts"],
   "references": [
-    { "path": "../adapters/domain/code" },
-    { "path": "../packages/domain" },
-    { "path": "../packages/persistence" },
-    { "path": "../packages/protocol" },
-    { "path": "../tsconfig.scripts.json" }
+    {
+      "path": "../adapters/domain/code"
+    },
+    {
+      "path": "../apps/gateway"
+    },
+    {
+      "path": "../packages/domain"
+    },
+    {
+      "path": "../packages/persistence"
+    },
+    {
+      "path": "../packages/protocol"
+    },
+    {
+      "path": "../tsconfig.scripts.json"
+    }
   ]
 }
