@@ -42,11 +42,19 @@ jobs:
           # The audit scripts are in this tier because claude[bot] blocked an earlier version of
           # this file for putting them in the other one, and it was right: they ARE the enforcement
           # mechanism, so delegating them is a weakened guardrail by any plain reading.
+          #
+          # `scripts/audit-*.sh` IS A GLOB, NOT A LIST -- because CLAUDE.md §8 states it as a glob,
+          # and because a deny-list of filenames cannot gate a class defined by one. An earlier
+          # version enumerated `audit-(seams|identity)`, so `scripts/audit-path-identity.sh` matched
+          # neither tier and merged under a green `guardrails` (#91) -- correctly green; the check
+          # did not apply. It failed OPEN, silently, on exactly the files that are new, which is the
+          # set an agent adding an audit script is in. `scripts/audit-guardrail-drift.sh` now fails
+          # the build if this pattern and §8 ever disagree again (#98).
           # `.github/workflows/**` is additionally impossible for the bot to review at all --
           # claude-code-action refuses to run when a PR edits a workflow file, its own protection
           # against a PR rewriting the workflow to reach the secrets. A marker there is unreachable,
           # not merely unwise.
-          OWNER_ONLY=$(echo "$CHANGED" | grep -E '^(\.github/workflows/|\.claude/settings\.json|scripts/audit-(seams|identity)\.sh)' || true)
+          OWNER_ONLY=$(echo "$CHANGED" | grep -E '^(\.github/workflows/|\.claude/settings\.json|scripts/audit-.*\.sh)' || true)
 
           # BOT-REVIEWABLE: CLAUDE.md alone. It is instructions to agents, not a check that runs --
           # changing it weakens no audit and breaks no build, and a bad change is visible in the
