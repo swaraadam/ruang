@@ -41,9 +41,14 @@ AUDIT_EXCLUDE_NOT_SOURCE=(
 # executes or is read at runtime stays in scope, and `tests/` and `config/` in particular: the file
 # that started #104 -- tests/contract/host-adapter.contract.test.ts, 13 `tmux` matches -- fails
 # under this list, which is the check that this line was drawn in the right place.
+#
+# ANCHORED WITH A LEADING SLASH. Bare 'docs' and '.claude' are unanchored rg globs and would exempt
+# a directory of that name at ANY depth -- a future packages/x/docs/ would be silently out of
+# scope with nothing failing. That is this issue's own shape hiding in its own exclusion list.
+# '*.md' stays unanchored on purpose: prose is prose wherever it sits.
 AUDIT_EXCLUDE_PROSE=(
-  'docs'            # blueprint (input, uneditable per §8), backlog (plan), runs (history of record)
-  '.claude'         # agent and skill definitions; several scope themselves BY naming the vocabulary
+  '/docs'           # blueprint (input, uneditable per §8), backlog (plan), runs (history of record)
+  '/.claude'        # agent and skill definitions; several scope themselves BY naming the vocabulary
   '*.md'            # CLAUDE.md, SETUP.md, READMEs -- prose wherever it sits
 )
 
